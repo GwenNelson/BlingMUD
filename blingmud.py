@@ -699,11 +699,14 @@ class Session(object):
 
     def login(self):
         self.send("")
-        self.send("Welcome to BLINGMUD")
+        self.send("Welcome to BlingMUD")
         self.send("===================")
         self.send("")
-        self.send("Type NEWUSER if you're new.")
-        self.send("Do not reuse an important password here.")
+        self.send("Type NEWUSER if you're new. Use all caps. Note that this a seperate service from IRC or whatever else is hosted by the admins")
+        self.send("You will need to setup a new account if you've never used BlingMUD before")
+        self.send("")
+        self.send("**** IMPORTANT ****")
+        self.send("DO NOT reuse an important password here.")
         self.send("")
 
         while self.running:
@@ -731,7 +734,7 @@ class Session(object):
                     "No such user. Type NEWUSER to create an account."
                 )
                 continue
-
+            self.send("Please note, your password input might echo - meaning people might see you typing it")
             self.prompt("Password: ")
             password = self.read_line(hidden=True)
 
@@ -757,7 +760,7 @@ class Session(object):
 
     def create_user(self):
         self.send("")
-        self.send("Creating a new BLINGMUD user.")
+        self.send("Creating a new BlingMUD user.")
 
         while self.running:
             self.prompt("Choose a name: ")
@@ -781,7 +784,8 @@ class Session(object):
                 if key in USERS:
                     self.send("That name is already registered.")
                     continue
-
+            self.send("DO NOT USE A PASSWORD YOU USE SOMEWHERE ELSE - the admins do not accept any liability for any loss if you do")
+            self.send("Remember, this place is just for fun, it's not meant to be serious")
             self.prompt("Choose a password: ")
             password = self.read_line(hidden=True)
 
