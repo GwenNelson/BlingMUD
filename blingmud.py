@@ -80,6 +80,18 @@ def strip_telnet_control_codes(data):
 
     return bytes(output)
 
+class Colour:
+    RESET = "\033[0m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+
+def colour(text, code):
+    return code + text + Colour.RESET
 
 class Entity(object):
     """Base class for things which can exist in the world."""
@@ -229,6 +241,17 @@ class FabulousChamber(Room):
 
     def hat_was_summoned(self):
         self.number_of_hats_summoned += 1
+
+    def describe_to(self,player):
+        if self.number_of_hats_summoned == 0:
+           super().describe_to(player)
+           player.session.send("Sadly, there are no pimp hats in the chamber")
+        elif self.number_of_hats_summoned == 1:
+            super().describe_to(player)
+            player.session.send("There is a pimp hat! Quickly, grab it!")
+        else:
+            super().describe_to(player)
+            player.session.send("There are multiple pimp hats!")
 
 
 class Player(Entity):
@@ -603,12 +626,7 @@ class WorshipCommand(Command):
             return
 
         if target is player:
-            session.send("")
-            session.send("BEHOLD EGOTHEISM!")
-            session.send("")
-            player.room.broadcast(
-                "* {0} worships {0} *".format(player.name)
-            )
+            player.room.broadcast("BEHOLD EGOTHEISM: * {0} worships {0} *".format(player.name))
             return
 
         session.send("You bow before {0}.".format(target.name))
