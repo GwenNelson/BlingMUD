@@ -242,16 +242,24 @@ class FabulousChamber(Room):
     def hat_was_summoned(self):
         self.number_of_hats_summoned += 1
 
-    def describe_to(self,player):
-        if self.number_of_hats_summoned == 0:
-           super().describe_to(player)
-           player.session.send("Sadly, there are no pimp hats in the chamber")
-        elif self.number_of_hats_summoned == 1:
-            super().describe_to(player)
+    def describe_to(self, player):
+        super().describe_to(player)
+
+        hats = 0
+
+        with self.lock:
+            for item in self.items:
+                if isinstance(item, PimpHat):
+                    hats += 1
+
+        if hats == 0:
+            player.session.send("Sadly, there are no pimp hats in the chamber.")
+        elif hats == 1:
             player.session.send("There is a pimp hat! Quickly, grab it!")
         else:
-            super().describe_to(player)
-            player.session.send("There are multiple pimp hats!")
+            player.session.send(
+                "There are {0} magnificent pimp hats here!".format(hats)
+            )
 
 
 class Player(Entity):
@@ -271,6 +279,74 @@ class Player(Entity):
                 return item
 
         return None
+
+    def look(self, viewer):
+        lines = [colour(self.name, Colour.CYAN)]
+
+        if self.fabulousness <= -20:
+            lines.append(
+                "They somehow make a sack of potatoes look glamorous by comparison."
+            )
+
+        elif self.fabulousness < 0:
+            lines.append(
+                "Fashion appears to have lost a fight with reality."
+            )
+
+        elif self.fabulousness == 0:
+            lines.append(
+                "They look perfectly ordinary. Nothing sparkles."
+            )
+
+        elif self.fabulousness < 10:
+            lines.append(
+                "They seem pleasantly well dressed."
+            )
+
+        elif self.fabulousness < 20:
+            lines.append(
+                "There is a definite air of fabulousness about them."
+            )
+
+        elif self.fabulousness < 40:
+            lines.append(
+                "They radiate fabulousness with almost supernatural confidence."
+            )
+
+        elif self.fabulousness < 75:
+            lines.append(
+                "Looking directly at them requires sunglasses."
+            )
+
+        elif self.fabulousness < 100:
+            lines.append(
+                "Nearby rainbows appear to be taking fashion advice from them."
+            )
+
+        else:
+            lines.append(
+                colour(
+                    "WARNING: Fabulousness levels have exceeded all known safety limits.",
+                    Colour.MAGENTA
+                )
+            )
+            lines.append(
+                "Reality itself seems uncertain whether it is fabulous enough to continue existing."
+            )
+
+        if "head" in self.equipment:
+            lines.append(
+                "They are wearing an enormous fabulous pimp hat."
+            )
+
+        if viewer is self:
+            lines.append("")
+            lines.append(
+                "You admire yourself for a moment. Entirely understandable."
+            )
+
+        return "\n".join(lines)
+
 
 
 class Command(object):
@@ -588,9 +664,6 @@ class BlingCommand(Command):
 
         with player.room.lock:
             player.room.items.append(hat)
-
-        if hasattr(player.room, "hat_was_summoned"):
-            player.room.hat_was_summoned()
 
         player.room.broadcast("")
         player.room.broadcast(
