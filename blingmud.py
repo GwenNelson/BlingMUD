@@ -267,6 +267,7 @@ class Player(Entity):
         Entity.__init__(self, name, "A mysterious adventurer.")
         self.session = None
         self.room = None
+        self.is_admin = False
         self.inventory = []
         self.equipment = {}
         self.fabulousness = 0
@@ -352,6 +353,8 @@ class Player(Entity):
 class Command(object):
     name = None
     aliases = ()
+    
+    admin_only = False
 
     def execute(self, session, arguments):
         raise NotImplementedError()
@@ -956,6 +959,9 @@ class Session(object):
         command = COMMANDS.get(command_name)
 
         if command is not None:
+           if command.admin_only and not session.player.is_admin:
+              session.send("You lack sufficient fabulousness.")
+              return
             command.execute(self, arguments)
             return
 
