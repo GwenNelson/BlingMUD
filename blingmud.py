@@ -7,6 +7,7 @@
 # asyncio, type annotations, or other modern frippery.
 #
 
+import os
 import hashlib
 import socketserver
 import threading
@@ -31,6 +32,7 @@ SESSIONS = {}
 USERS_LOCK = threading.RLock()
 SESSIONS_LOCK = threading.RLock()
 
+ADMIN_PASSWORD_HASH = None
 
 def password_hash(password):
     """Return a simple password hash.
@@ -399,6 +401,23 @@ class HelpCommand(Command):
         session.send("/worship <person>")
         session.send("/bling")
         session.send("/quit")
+
+@register_command
+class AdminCommand(Command):
+    name = "admin"
+    def execute(self,session,arguments):
+        if ADMIN_PASSWORD_HASH is None:
+            session.send("Thou hath failed to configure thy admin.hash file, foolish fool!")
+            return
+        session.prompt("Password: ")
+
+        try_admin_pwd = session.read_line(hidden=True)
+        hashed = password_hash(try_admin_pwd)
+        if hashed == ADMIN_PASSWORD_HASH:
+           session.player.is_admin = True
+           session.send("Reality bends to your will")
+        else:
+           session.send("Be gone! That is not the magic word!")
 
 
 @register_command
@@ -962,8 +981,8 @@ class Session(object):
            if command.admin_only and not session.player.is_admin:
               session.send("You lack sufficient fabulousness.")
               return
-            command.execute(self, arguments)
-            return
+           command.execute(self, arguments)
+           return
 
         if self.player.room.on_command(
             self,
@@ -1123,6 +1142,16 @@ class ThreadedMudServer(
 
 
 def main():
+    global ADMIN_PASSWORD_HASH
+    if os.path.exists("admin.hash"):
+        with open("admin.hash", "r") as f:
+            ADMIN_PASSWORD_HASH = f.read().strip()
+
+        print("Admin password loaded.")
+    else:
+        print("WARNING: admin.hash not found.")
+        print("         Administrative commands are disabled.")
+
     server = ThreadedMudServer((HOST, PORT), MudRequestHandler)
 
     print("BLINGMUD listening on {0}:{1}".format(HOST, PORT))
