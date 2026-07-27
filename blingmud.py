@@ -10,12 +10,14 @@
 
 import os
 import time
+import json
+import sqlite3
 import hashlib
 import socketserver
 import threading
 import traceback
 
-
+USERS_DB = 'users.sqlite'
 HOST = "0.0.0.0"
 PORT = 4000
 
@@ -45,6 +47,101 @@ def password_hash(password):
     encoded = password.encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
+
+def init_user_database():
+    connection = sqlite3.connect(USERS_DB)
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                username_lower TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                json_state TEXT NOT NULL
+            )
+        """)
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def user_exists(username):
+    connection = sqlite3.connect(USERS_DB)
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            "SELECT 1 FROM users WHERE username_lower=?",
+            (username.lower(),)
+        )
+
+        return cursor.fetchone() is not None
+
+    finally:
+        connection.close()
+
+
+def create_user(username, password):
+    connection = sqlite3.connect(USERS_DB)
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO users
+            (username, username_lower, password_hash, json_state)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                username,
+                username.lower(),
+                password_hash(password),
+                json.dumps({})
+            )
+        )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def load_user(username):
+    connection = sqlite3.connect(USERS_DB)
+
+    try:
+        cursor = connection.cursor()
+
+        cursor.execute(
+            """
+            SELECT username,
+                   password_hash,
+                   json_state
+            FROM users
+            WHERE username_lower=?
+            """,
+            (username.lower(),)
+        )
+
+        row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        return {
+            "username": row[0],
+            "password": row[1],
+            "state": json.loads(row[2])
+        }
+
+    finally:
+        connection.close()
 
 def strip_telnet_control_codes(data):
     """Remove basic Telnet negotiation bytes.
@@ -944,7 +1041,7 @@ class Session(object):
             key = name.lower()
 
             with USERS_LOCK:
-                account = USERS.get(key)
+                account = load_user(name)
 
             if account is None:
                 self.send("No such user")
@@ -991,7 +1088,7 @@ class Session(object):
                     self.send("That user is already connected.")
                     continue
 
-                self.player = Player(account["name"])
+                self.player = Player(account["username"])
                 self.player.session = self
                 SESSIONS[key] = self
 
@@ -1022,7 +1119,7 @@ class Session(object):
             key = name.lower()
 
             with USERS_LOCK:
-                if key in USERS:
+                if user_exists(name):
                     self.send("That name is already registered.")
                     continue
             self.send("DO NOT USE A PASSWORD YOU USE SOMEWHERE ELSE - the admins do not accept any liability for any loss if you do")
@@ -1048,16 +1145,13 @@ class Session(object):
                 continue
 
             with USERS_LOCK:
-                if key in USERS:
+                if user_exists(name):
                     self.send(
                         "Someone registered that name while you typed."
                     )
                     continue
 
-                USERS[key] = {
-                    "name": name,
-                    "password": password_hash(password)
-                }
+                create_user(name,password)
 
             with SESSIONS_LOCK:
                 self.player = Player(name)
@@ -1277,6 +1371,9 @@ class ThreadedMudServer(
 
 def main():
     global ADMIN_PASSWORD_HASH
+
+    init_user_database()
+
     if os.path.exists("admin.hash"):
         with open("admin.hash", "r") as f:
             ADMIN_PASSWORD_HASH = f.read().strip()
@@ -1285,6 +1382,7 @@ def main():
     else:
         print("WARNING: admin.hash not found.")
         print("         Administrative commands are disabled.")
+
 
     server = ThreadedMudServer((HOST, PORT), MudRequestHandler)
 
