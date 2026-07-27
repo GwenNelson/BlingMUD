@@ -7,7 +7,9 @@
 # asyncio, type annotations, or other modern frippery.
 #
 
+
 import os
+import time
 import hashlib
 import socketserver
 import threading
@@ -810,6 +812,13 @@ class Session(object):
 
         return None
 
+    def typewriter(self, text, delay=0.4):
+        with self.send_lock:
+             time.sleep(delay)
+             for ch in text:
+                 self.request.sendall(ch.encode("utf-8"))
+                 time.sleep(delay)
+
     def login(self):
         self.send("")
         self.send("Welcome to BlingMUD")
@@ -843,10 +852,33 @@ class Session(object):
                 account = USERS.get(key)
 
             if account is None:
-                self.send(
-                    "No such user. Type NEWUSER to create an account."
-                )
-                continue
+                self.send("No such user")
+                self.send("Are you new? We told you to type NEWUSER, but never mind, maybe we should do that for you?")
+                self.send("If you're not new, maybe disconnect and reconnect - and mind your typos!")
+                time.sleep(1.5)
+                self.send("")
+                self.send("But assuming you're a newbie, fine, wait a moment....")
+                self.send("")
+                time.sleep(1.5)
+                self.prompt("Calling someone to fix your mess")
+                self.typewriter(".........\n")
+                self.send("Don't worry, someone is fixing it for you now, watch and learn:")
+                self.send("")
+                time.sleep(0.75)
+                self.prompt("Name: ")
+                self.typewriter("NEWUSER\n")
+                self.send("")
+                self.send("Creating a newbie BlingMUD user.")
+                self.prompt("Choose a name: ")
+                self.typewriter("StupidNewbie\n")
+                self.send("")
+                self.send("Only joking, let's do it properly - this time you take over after we type NEWUSER for you, mmkay?")
+                self.send("")
+                time.sleep(1.5)
+                self.prompt("Name: ")
+                self.typewriter("NEWUSER\n")
+                return self.create_user()
+
             self.send("Please note, your password input might echo - meaning people might see you typing it")
             self.prompt("Password: ")
             password = self.read_line(hidden=True)
