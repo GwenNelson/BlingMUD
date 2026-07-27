@@ -152,11 +152,24 @@ class Room(object):
         self.description = description
         self.exits = {}
         self.players = []
+        self.npcs = []
         self.items = []
         self.lock = threading.RLock()
 
     def add_exit(self, direction, destination):
         self.exits[direction.lower()] = destination
+
+    def add_npc(self, npc):
+        with self.lock:
+            if npc not in self.npcs:
+                self.npcs.append(npc)
+                npc.room = self
+
+    def remove_npc(self, npc):
+        with self.lock:
+            if npc in self.npcs:
+                self.npcs.remove(npc)
+                npc.room = None
 
     def enter(self, player, announce=True):
         with self.lock:
@@ -164,6 +177,9 @@ class Room(object):
                 self.players.append(player)
 
         player.room = self
+
+        for npc in self.npcs:
+            npc.on_player_enter(player)
 
         if announce:
             self.broadcast(
@@ -175,6 +191,9 @@ class Room(object):
         with self.lock:
             if player in self.players:
                 self.players.remove(player)
+
+        for npc in self.npcs:
+            npc.on_player_leave(player)
 
         if announce:
             self.broadcast(
@@ -205,10 +224,12 @@ class Room(object):
             ]
             item_names = [item.name for item in self.items]
 
-        if other_players:
-            player.session.send(
-                "People here: {0}".format(", ".join(other_players))
-            )
+            npc_names = [npc.name for npc in self.npcs]
+
+        if npc_names:
+           player.session.send("People here: {0}".format(", ".join(other_players + npc_names)) ) 
+        elif other_players:
+             player.session.send("People here: {0}".format(", ".join(other_players)))
 
         if item_names:
             player.session.send(
@@ -261,6 +282,76 @@ class FabulousChamber(Room):
                 "There are {0} magnificent pimp hats here!".format(hats)
             )
 
+class NPC(Entity):
+    """A living non-player character."""
+
+    def __init__(self, name, description=""):
+        Entity.__init__(self, name, description)
+
+        self.room = None
+        self.flags = set()
+        self.keywords = []
+        self.inventory = []
+
+    def enter(self, room):
+        if self.room is not None:
+            self.room.remove_npc(self)
+
+        self.room = room
+        room.add_npc(self)
+
+    def on_player_enter(self, player):
+        """Called when a player enters the room."""
+        pass
+
+    def on_player_leave(self, player):
+        pass
+
+    def on_say(self, player, text):
+        """Player spoke aloud."""
+        pass
+
+    def on_emote(self, player, action):
+        pass
+
+    def think(self):
+        """Periodic update."""
+        pass
+
+    def speak(self, text):
+        if self.room:
+            self.room.broadcast("<{0}> {1}".format(self.name, text))
+
+    def emote(self, text):
+        if self.room:
+            self.room.broadcast("* {0} {1}".format(self.name, text))
+
+class BraveSirKnight(NPC):
+
+    def __init__(self):
+        NPC.__init__(
+            self,
+            "Brave Sir Knight",
+            "A weary but honourable knight keeps watch over the crossroads."
+        )
+
+    def on_player_enter(self, player):
+        self.speak(
+            "Welcome, traveller. Rest if thou art weary."
+        )
+
+
+class Crossroads(Room):
+   """ Built for Brave Sir Knight to guard
+   """
+   def __init__(self):
+       Room.__init__(self,"crossroads","The lonely crossroads",
+                     "Four ancient roads meet upon a lonely stretch of open country, their worn stones bearing the marks of countless travellers who have passed this way over generations. A weathered signpost stands at the centre, its faded carvings pointing toward distant kingdoms whose names have long since become unfamiliar.\n"
+                     "A broad oak offers welcome shade beside a clear stone well, while a small campfire smoulders nearby. Fresh water rests in a bucket, and a neatly stacked pile of firewood suggests that someone still tends this forgotten place with quiet diligence.\n"
+                    "Though no town lies within sight, the crossroads feels strangely safe. Birds sing from the hedgerows, the breeze carries the scent of wildflowers and woodsmoke, and every path seems to promise another adventure beyond the horizon.\n"
+                    "Standing watch over it all is Brave Sir Knight, whose unwavering vigil has made this lonely place a haven for weary souls. He greets every traveller with kindness, offers what simple aid he can, and asks only for news of the roads beyond the crossroads he has sworn to protect.\n")
+       self.knight = BraveSirKnight()
+       self.add_npc(self.knight)
 
 class Player(Entity):
     def __init__(self, name):
@@ -348,8 +439,6 @@ class Player(Entity):
 
         return "\n".join(lines)
 
-
-
 class Command(object):
     name = None
     aliases = ()
@@ -433,8 +522,9 @@ class LookCommand(Command):
         target_name = arguments.strip().lower()
 
         with player.room.lock:
-            room_items = list(player.room.items)
+            room_items   = list(player.room.items)
             room_players = list(player.room.players)
+            room_npcs    = list(player.room.npcs)
 
         for item in player.inventory + room_items:
             if item.name.lower() == target_name:
@@ -445,6 +535,11 @@ class LookCommand(Command):
             if other_player.name.lower() == target_name:
                 session.send(other_player.look(player))
                 return
+
+        for npc in room_npcs:
+            if npc.name.lower() == target_name:
+               session.send(npc.look(player))
+               return
 
         session.send("You do not see {0} here.".format(arguments))
 
@@ -982,8 +1077,9 @@ class Session(object):
 
         old_room = player.room
         old_room.leave(player)
-        destination.enter(player)
         destination.describe_to(player)
+        self.send("")
+        destination.enter(player)
 
     def handle_chat(self, line):
         self.player.room.broadcast(
@@ -1123,11 +1219,16 @@ class World(object):
             )
         )
 
+        crossroads = self.add_room(Crossroads())
+
         square.add_exit("north", chamber)
         chamber.add_exit("south", square)
 
         square.add_exit("east", alley)
         alley.add_exit("west", square)
+
+        square.add_exit("south",crossroads)
+        crossroads.add_exit("north",square)
 
         self.starting_room = square
 
