@@ -10,6 +10,7 @@
 
 import os
 import time
+import random
 import json
 import sqlite3
 import hashlib
@@ -20,6 +21,7 @@ import traceback
 USERS_DB = 'users.sqlite'
 HOST = "0.0.0.0"
 PORT = 4000
+TICK_DELAY=1.0
 
 # Temporary in-memory user database.
 # Everything disappears whenever the server restarts.
@@ -257,9 +259,11 @@ class Room(object):
         self.exits[direction.lower()] = destination
 
     def add_npc(self, npc):
+        global NPC_MANAGER
         with self.lock:
             if npc not in self.npcs:
                 self.npcs.append(npc)
+                NPC_MANAGER.register(npc)
                 npc.room = self
 
     def remove_npc(self, npc):
@@ -379,10 +383,47 @@ class FabulousChamber(Room):
                 "There are {0} magnificent pimp hats here!".format(hats)
             )
 
+class NPCManager(object):
+   def __init__(self):
+       self.npcs                  = []
+       self.lock                  = threading.RLock()
+       self._ticker_thread        = threading.Thread(target=self._run_ticker_thread)
+       self._ticker_thread.daemon = True
+       self.running               = False
+
+   def register(self, npc):
+       with self.lock:
+            if npc not in self.npcs:
+               self.npcs.append(npc)
+
+   def unregister(self, npc):
+       with self.lock:
+            self.npcs.remove(npc)
+
+   def tick(self):
+       with self.lock:
+            for npc in list(self.npcs):
+                npc.tick()
+
+   def _run_ticker_thread(self):
+       while self.running:
+          time.sleep(TICK_DELAY)
+          self.tick()
+
+   def start(self):
+       self.running = True
+       self._ticker_thread.start()
+   
+   def stop(self):
+       self.running = False
+       self._ticker_thread.join()
+
+
 class NPC(Entity):
     """A living non-player character."""
 
     def __init__(self, name, description=""):
+        global NPC_MANAGER
         Entity.__init__(self, name, description)
 
         self.room = None
@@ -411,7 +452,7 @@ class NPC(Entity):
     def on_emote(self, player, action):
         pass
 
-    def think(self):
+    def tick(self):
         """Periodic update."""
         pass
 
@@ -432,10 +473,80 @@ class BraveSirKnight(NPC):
             "A weary but honourable knight keeps watch over the crossroads."
         )
 
+        self.idle_emotes = (
+            "looks along each of the four roads in turn.",
+            "adjusts his sword belt.",
+            "rests a gauntleted hand upon the pommel of his sword.",
+            "studies the distant horizon.",
+            "checks the leather straps of his armour.",
+            "nods politely to passing travellers.",
+            "straightens the weathered signpost.",
+            "draws a bucket of fresh water from the well.",
+            "adds another log to the campfire.",
+            "brushes dust from his tabard.",
+            "paces slowly around the crossroads.",
+            "examines the tracks left by recent wagons.",
+            "whistles a quiet marching tune.",
+            "offers a silent prayer for those upon the roads.",
+            "smiles faintly as birds sing in the hedgerow.",
+            "tightens the straps on his shield.",
+            "watches over the crossroads with quiet determination.",
+            "takes a slow drink from his waterskin.",
+            "stretches his weary shoulders.",
+            "sighs, but resumes his vigilant watch."
+        )
+
+        self.idle_speech = (
+            "May the roads be kind to all who travel them.",
+            "A peaceful day is a blessing.",
+            "I've stood this watch for many years.",
+            "The crossroads remember every traveller.",
+            "Keep your blade sharp and your heart kinder still.",
+            "No traveller should face the road alone.",
+        )
+
+        self._acted_last_tick = False
+        self._last_idle_emote = ""
+        self._last_idle_speech = ""
+
+    def tick(self):
+        if not self.room:
+           return
+
+        with self.room.lock:
+           if not self.room.players:
+              return
+
+        if random.randint(1, 10) > 1: # 10% chance of him doing something every tick
+           return
+
+        # stop him doing stuff two ticks in a row
+        if self._acted_last_tick:
+           self._acted_last_tick = False
+           return
+
+        self._acted_last_tick = True 
+        
+        roll = random.random()
+
+        if roll < 0.5:
+           chosen_speech = random.choice(self.idle_speech)
+           while chosen_speech == self._last_idle_speech:     # prevent him saying the same thing twice in a row too
+              chosen_speech = random.choice(self.idle_speech)
+           self.speak(chosen_speech)
+           self._last_idle_speech = chosen_speech
+        else:
+           chosen_emote = random.choice(self.idle_emotes)
+           while chosen_emote == self._last_idle_emote:
+              chosen_emote = random.choice(self.idle_emotes)
+           self.emote(chosen_emote)
+           self._last_idle_emote = chosen_emote
+
     def on_player_enter(self, player):
         self.speak(
             "Welcome, traveller. Rest if thou art weary."
         )
+        self._acted_last_tick = True # we count the inital greeting as acting so players aren't likely to immediately be spammed by him
 
 
 class Crossroads(Room):
@@ -1333,8 +1444,8 @@ class World(object):
         self.starting_room = square
 
 
+NPC_MANAGER = NPCManager()
 WORLD = World()
-
 
 def valid_username(name):
     if len(name) < 2 or len(name) > 20:
@@ -1393,6 +1504,7 @@ def main():
     print("Press Ctrl-C to stop.")
 
     try:
+        NPC_MANAGER.start()
         server.serve_forever()
     except KeyboardInterrupt:
         print("")
@@ -1400,7 +1512,7 @@ def main():
     finally:
         server.shutdown()
         server.server_close()
-
+        NPC_MANAGER.stop()
 
 if __name__ == "__main__":
     main()
