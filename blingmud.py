@@ -241,10 +241,6 @@ class FabulousChamber(Room):
             "Sequins glitter across every surface. The room appears to "
             "have been decorated by someone with unlimited confidence."
         )
-        self.number_of_hats_summoned = 0
-
-    def hat_was_summoned(self):
-        self.number_of_hats_summoned += 1
 
     def describe_to(self, player):
         super().describe_to(player)
