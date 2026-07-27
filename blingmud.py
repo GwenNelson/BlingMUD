@@ -855,7 +855,7 @@ class Session(object):
                 self.send("No such user")
                 self.send("Are you new? We told you to type NEWUSER, but never mind, maybe we should do that for you?")
                 self.send("If you're not new, maybe disconnect and reconnect - and mind your typos!")
-                time.sleep(1.5)
+                time.sleep(0.8)
                 self.send("")
                 self.send("But assuming you're a newbie, fine, wait a moment....")
                 self.send("")
