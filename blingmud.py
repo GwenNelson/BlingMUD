@@ -918,8 +918,12 @@ class Session(object):
         self.send("Type NEWUSER if you're new. Use all caps. Note that this a seperate service from IRC or whatever else is hosted by the admins")
         self.send("You will need to setup a new account if you've never used BlingMUD before")
         self.send("")
+        self.send("You may also have to setup a new account again if the server has been updated recently - we don't yet have a persistent database")
+        self.send("BlingMUD is in heavy development right now - watch this space to see when the world becomes persistent!")
+        self.send("")
         self.send("**** IMPORTANT ****")
         self.send("DO NOT reuse an important password here.")
+        self.send("Please also note that passwords will probably echo - you have been warned!")
         self.send("")
 
         while self.running:
