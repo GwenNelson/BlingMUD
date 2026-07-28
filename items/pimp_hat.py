@@ -16,3 +16,25 @@ class PimpHat(Item):
         player.fabulousness -= 10
 
 
+
+
+@register_command
+class BlingCommand(Command):
+    name = "bling"
+    aliases = ()
+
+    def execute(self, session, arguments):
+        player = session.player
+        hat = PimpHat()
+
+        with player.room.lock:
+            player.room.items.append(hat)
+
+        player.room.broadcast("")
+        player.room.broadcast(
+            "* AN ENORMOUS FABULOUS PIMP HAT FALLS FROM THE SKY *"
+        )
+        player.room.broadcast("")
+        session.send("It lands at your feet with impossible style.")
+
+
