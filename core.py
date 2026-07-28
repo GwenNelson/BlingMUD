@@ -3,6 +3,19 @@ import time
 
 TICK_DELAY = 3.0
 
+class Colour:
+    RESET = "\033[0m"
+    RED = "\033[31m"
+    GREEN = "\033[32m"
+    YELLOW = "\033[33m"
+    BLUE = "\033[34m"
+    MAGENTA = "\033[35m"
+    CYAN = "\033[36m"
+    WHITE = "\033[37m"
+
+def colour(text, code):
+    return code + text + Colour.RESET
+
 class Entity(object):
     """Base class for things which can exist in the world."""
 
@@ -19,9 +32,10 @@ class Entity(object):
 class Item(Entity):
     """An object which may be carried or equipped."""
 
-    def __init__(self, name, description="", wearable=False):
+    def __init__(self, name, description="", wearable=False, worn_where="Head"):
         Entity.__init__(self, name, description)
         self.wearable = wearable
+        self.worn_where = "Head"
 
     def on_equip(self, player):
         pass
@@ -213,10 +227,13 @@ class Player(Entity):
                 "Reality itself seems uncertain whether it is fabulous enough to continue existing."
             )
 
-        if "head" in self.equipment:
-            lines.append(
-                "They are wearing an enormous fabulous pimp hat."
-            )
+        if self.equipment.items():
+            lines.append("Equipment:")
+            for k,v in self.equipment.items():
+               if "describe_look_equip" in type(v).__dict__:
+                   lines.append("\t%s" % v.describe_look_equip(self))
+               else:
+                   lines.append("\t%s: %s" % (k,v.name))
 
         if viewer is self:
             lines.append("")
@@ -224,7 +241,7 @@ class Player(Entity):
                 "You admire yourself for a moment. Entirely understandable."
             )
 
-        return "\n".join(lines)
+        return "\r\n".join(lines)
 
 class Command(object):
     name = None

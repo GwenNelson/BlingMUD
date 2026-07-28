@@ -6,11 +6,22 @@ class PimpHat(Item):
             self,
             "pimp hat",
             "An enormous and excessively fabulous pimp hat.",
-            wearable=True
+            wearable=True,
+            worn_where="Head"
         )
 
     def on_equip(self, player):
         player.fabulousness += 10
+
+        player.session.send("You feel considerably more fabulous.")
+
+        player.room.broadcast(
+            "* {0} equips an enormous fabulous pimp hat.".format(player.name),
+            exclude=player.session
+        )
+    
+    def describe_look_equip(self, player):
+        return "They are wearing an enormous fabulous pimp hat!"
 
     def on_unequip(self, player):
         player.fabulousness -= 10
