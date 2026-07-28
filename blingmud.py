@@ -39,6 +39,16 @@ SESSIONS_LOCK = threading.RLock()
 
 ADMIN_PASSWORD_HASH = None
 
+IAC = 255
+WILL = 251
+WONT = 252
+DO = 253
+DONT = 254
+
+TELOPT_ECHO = 1
+TELOPT_SGA = 3
+TELOPT_LINEMODE = 34
+
 def password_hash(password):
     """Return a simple password hash.
 
@@ -756,7 +766,62 @@ class Session(object):
         self.receive_buffer = b""
         self.send_lock = threading.RLock()
 
+        # State for preserving partially typed input when asynchronous
+        # world messages arrive.
+        self.prompt_text = ""
+        self.current_input = ""
+        self.input_active = False
+        self.input_hidden = False
+
+    def enable_character_mode(self):
+        """Ask a real Telnet client to use server-side character input."""
+        negotiation = bytes((
+            IAC, WILL, TELOPT_ECHO,
+            IAC, WILL, TELOPT_SGA,
+            IAC, DONT, TELOPT_LINEMODE
+        ))
+
+        with self.send_lock:
+            self.request.sendall(negotiation)
+
+    def _consume_telnet_command(self):
+        """Consume one Telnet command after an IAC byte."""
+
+        try:
+            command_data = self.request.recv(1)
+
+            if not command_data:
+                self.running = False
+                return False
+
+            command = command_data[0]
+
+            # WILL, WONT, DO and DONT have an option byte.
+            if command in (WILL, WONT, DO, DONT):
+                option_data = self.request.recv(1)
+
+                if not option_data:
+                    self.running = False
+                    return False
+
+                return True
+
+            # Escaped literal 255. Currently ignored.
+            if command == IAC:
+                return True
+
+            return True
+
+        except Exception:
+            self.running = False
+            return False
+
     def send(self, message=""):
+        """Send a complete line to the client.
+
+        If the player is currently typing, temporarily erase their prompt
+        and partial input, print the message, then restore both.
+        """
         if not self.running:
             return
 
@@ -764,57 +829,171 @@ class Session(object):
 
         try:
             data = text.encode("utf-8", "replace")
+
             with self.send_lock:
+                if self.input_active:
+                    # Return to column zero and erase the entire current line.
+                    self.request.sendall(b"\r\033[2K")
+
                 self.request.sendall(data)
+
+                if self.input_active:
+                    restored = self.prompt_text
+
+                    # Passwords and other hidden input should not be redrawn.
+                    if not self.input_hidden:
+                        restored += self.current_input
+
+                    self.request.sendall(
+                        restored.encode("utf-8", "replace")
+                    )
+
         except Exception:
             self.running = False
 
     def prompt(self, text):
+        """Display a prompt and begin tracking the player's input line."""
         if not self.running:
             return
 
         try:
             data = text.encode("utf-8", "replace")
+
             with self.send_lock:
+                self.prompt_text = text
+                self.current_input = ""
+                self.input_active = True
+                self.input_hidden = False
+
                 self.request.sendall(data)
+
         except Exception:
             self.running = False
 
-    def read_line(self, hidden=False):
-        """Read one line.
+    def _input_text_from_bytes(self, data):
+        """Produce the current editable input text from received bytes.
 
-        'hidden' is advisory only. Ordinary Telnet cannot reliably disable
-        local echo without proper option negotiation, so passwords may be
-        visible depending on the client.
+        This handles ordinary characters and basic Backspace/Delete editing.
+        More advanced cursor movement and command history can be added later.
         """
+        data = strip_telnet_control_codes(data)
+        text = data.decode("utf-8", "replace")
+
+        result = []
+
+        for character in text:
+            if character == "\r" or character == "\n":
+                continue
+
+            if character == "\b" or ord(character) == 127:
+                if result:
+                    result.pop()
+                continue
+
+            result.append(character)
+
+        return "".join(result)
+
+
+    def read_line(self, hidden=False):
+        """Read and edit one line using server-side character echo."""
+
+        characters = []
+
+        with self.send_lock:
+            self.current_input = ""
+            self.input_active = True
+            self.input_hidden = hidden
+
         while self.running:
-            newline = self.receive_buffer.find(b"\n")
-
-            if newline != -1:
-                raw_line = self.receive_buffer[:newline]
-                self.receive_buffer = self.receive_buffer[newline + 1:]
-
-                raw_line = raw_line.rstrip(b"\r")
-                raw_line = strip_telnet_control_codes(raw_line)
-
-                return raw_line.decode("utf-8", "replace").strip()
-
-            data = self.request.recv(1024)
+            try:
+                data = self.request.recv(1)
+            except Exception:
+                self.running = False
+                return None
 
             if not data:
                 self.running = False
                 return None
 
-            self.receive_buffer += data
+            byte = data[0]
 
-        return None
+            # Telnet command.
+            if byte == IAC:
+                if not self._consume_telnet_command():
+                    return None
+                continue
+
+            # Enter may arrive as CR LF, CR NUL, or just LF.
+            if byte in (10, 13):
+                with self.send_lock:
+                    self.request.sendall(b"\r\n")
+
+                    self.current_input = ""
+                    self.prompt_text = ""
+                    self.input_active = False
+                    self.input_hidden = False
+
+                return "".join(characters).strip()
+
+            # Backspace or Delete.
+            if byte in (8, 127):
+                if characters:
+                    characters.pop()
+
+                    with self.send_lock:
+                        self.current_input = "".join(characters)
+
+                        if not hidden:
+                            # Move back, erase character, move back again.
+                            self.request.sendall(b"\b \b")
+
+                continue
+
+            # Ignore other ASCII control characters for now.
+            if byte < 32:
+                continue
+
+            character = bytes((byte,)).decode("utf-8", "replace")
+            characters.append(character)
+
+            with self.send_lock:
+                self.current_input = "".join(characters)
+
+                if not hidden:
+                    self.request.sendall(
+                        character.encode("utf-8", "replace")
+                    )
+
+
 
     def typewriter(self, text, delay=0.4):
         with self.send_lock:
-             time.sleep(delay)
-             for ch in text:
-                 self.request.sendall(ch.encode("utf-8"))
-                 time.sleep(delay)
+            time.sleep(delay)
+
+            for character in text:
+                self.request.sendall(
+                    character.encode("utf-8")
+                )
+
+                if character == "\n":
+                    self.current_input = ""
+                    self.prompt_text = ""
+                    self.input_active = False
+                    self.input_hidden = False
+
+                elif character == "\r":
+                    pass
+
+                elif character == "\b":
+                    if self.current_input:
+                        self.current_input = self.current_input[:-1]
+
+                else:
+                    self.current_input += character
+
+                time.sleep(delay)
+
 
     def login(self):
         self.send("")
@@ -1029,7 +1208,10 @@ class Session(object):
             "Unknown command: /{0}. Try /help.".format(command_name)
         )
 
+
     def run(self):
+        self.enable_character_mode()
+
         try:
             if not self.login():
                 return
