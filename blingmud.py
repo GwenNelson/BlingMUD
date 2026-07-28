@@ -693,7 +693,7 @@ class Session(object):
 
     def handle_chat(self, line):
         self.player.room.broadcast(
-            "<{0}> {1}".format(self.player.name, line)
+            "<{0}> {1}".format(colour(self.player.name,Colour.BRIGHT_CYAN), line)
         )
 
     def handle_command(self, line):

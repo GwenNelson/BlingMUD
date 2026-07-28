@@ -127,7 +127,7 @@ class EmoteCommand(Command):
             return
 
         session.player.room.broadcast(
-            "* {0} {1}".format(session.player.name, arguments)
+            "* {0} {1}".format(colour(session.player.name,Colour.BRIGHT_CYAN), arguments)
         )
 
 @register_command
@@ -149,7 +149,7 @@ class InventoryCommand(Command):
             if item in player.equipment.values():
                 equipped = " (equipped)"
 
-            session.send("  {0}{1}".format(item.name, equipped))
+            session.send("  {0}{1}".format(colour(item.name,Colour.BRIGHT_GREEN), equipped))
 
 
 @register_command
@@ -181,10 +181,10 @@ class TakeCommand(Command):
             return
 
         player.inventory.append(item)
-        session.send("You take the {0}.".format(item.name))
+        session.send("You take the {0}.".format(colour(item.name,Colour.BRIGHT_GREEN)))
 
         player.room.broadcast(
-            "* {0} takes the {1}.".format(player.name, item.name),
+            "* {0} takes the {1}.".format(colour(player.name,Colour.BRIGHT_CYAN), colour(item.name,Colour.BRIGHT_GREEN)),
             exclude=session
         )
 
@@ -212,10 +212,10 @@ class DropCommand(Command):
         with player.room.lock:
             player.room.items.append(item)
 
-        session.send("You drop the {0}.".format(item.name))
+        session.send("You drop the {0}.".format(colour(item.name,Colour.BRIGHT_GREEN)))
 
         player.room.broadcast(
-            "* {0} drops the {1}.".format(player.name, item.name),
+            "* {0} drops the {1}.".format(colour(player.name,Colour.BRIGHT_CYAN), colour(item.name,Colour.BRIGHT_GREEN)),
             exclude=session
         )
 
@@ -247,7 +247,7 @@ class EquipCommand(Command):
             old_item.on_unequip(player)
 
         player.equipment[item.worn_where] = item
-        player.session.send("You equip the {0}.".format(item.name))
+        player.session.send("You equip the {0}.".format(colour(item.name,Colour.BRIGHT_GREEN)))
         item.on_equip(player)
 
 @register_command
@@ -257,7 +257,7 @@ class StatsCommand(Command):
 
     def execute(self, session, arguments):
         player = session.player
-        session.send("Name: {0}".format(player.name))
+        session.send("Name: {0}".format(colour(player.name,Colour.BRIGHT_CYAN)))
         session.send(
             "Fabulousness: +{0}%".format(player.fabulousness)
         )

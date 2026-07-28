@@ -13,6 +13,14 @@ class Colour:
     CYAN = "\033[36m"
     WHITE = "\033[37m"
 
+    BRIGHT_RED    = "\033[91m"
+    BRIGHT_GREEN  = "\033[92m"
+    BRIGHT_YELLOW = "\033[93m"
+    BRIGHT_BLUE   = "\033[94m"
+    BRIGHT_MAGENTA= "\033[95m"
+    BRIGHT_CYAN   = "\033[96m"
+    BRIGHT_WHITE  = "\033[97m"
+
 def colour(text, code):
     return code + text + Colour.RESET
 
@@ -39,6 +47,14 @@ class Item(Entity):
 
     def on_equip(self, player):
         pass
+
+    def describe_look_equip(self, player):
+        """Describe the item as a piece of equipment when equipped
+        """
+        if self.wearable:
+           return "%s: %s" % (self.name,self.worn_where)
+        else:
+           return self.name
 
     def on_unequip(self, player):
         pass
@@ -122,13 +138,13 @@ class Room(object):
 
         with self.lock:
             other_players = [
-                present.name
+                colour(present.name, Colour.BRIGHT_CYAN)
                 for present in self.players
                 if present is not player
             ]
-            item_names = [item.name for item in self.items]
+            item_names = [colour(item.name, Colour.BRIGHT_GREEN) for item in self.items]
 
-            npc_names = [npc.name for npc in self.npcs]
+            npc_names = [colour(npc.name, Colour.BRIGHT_CYAN) for npc in self.npcs]
 
         if npc_names:
            player.session.send("People here: {0}".format(", ".join(other_players + npc_names)) ) 
@@ -174,7 +190,7 @@ class Player(Entity):
         return None
 
     def look(self, viewer):
-        lines = [colour(self.name, Colour.CYAN)]
+        lines = [colour(self.name, Colour.BRIGHT_CYAN)]
 
         if self.fabulousness <= -20:
             lines.append(
@@ -230,10 +246,7 @@ class Player(Entity):
         if self.equipment.items():
             lines.append("Equipment:")
             for k,v in self.equipment.items():
-               if "describe_look_equip" in type(v).__dict__:
-                   lines.append("\t%s" % v.describe_look_equip(self))
-               else:
-                   lines.append("\t%s: %s" % (k,v.name))
+                lines.append("\t%s" % v.describe_look_equip(self))
 
         if viewer is self:
             lines.append("")
@@ -351,9 +364,9 @@ class NPC(Entity):
 
     def speak(self, text):
         if self.room:
-            self.room.broadcast("<{0}> {1}".format(self.name, text))
+            self.room.broadcast("<{0}> {1}".format(colour(self.name,Colour.BRIGHT_CYAN), text))
 
     def emote(self, text):
         if self.room:
-            self.room.broadcast("* {0} {1}".format(self.name, text))
+            self.room.broadcast("* {0} {1}".format(colour(self.name,Colour.BRIGHT_CYAN), text))
 
