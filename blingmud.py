@@ -21,7 +21,6 @@ import traceback
 USERS_DB = 'users.sqlite'
 HOST = "0.0.0.0"
 PORT = 4000
-TICK_DELAY=1.0
 
 # Temporary in-memory user database.
 # Everything disappears whenever the server restarts.
@@ -196,32 +195,7 @@ class Colour:
 def colour(text, code):
     return code + text + Colour.RESET
 
-class Entity(object):
-    """Base class for things which can exist in the world."""
-
-    def __init__(self, name, description=""):
-        self.name = name
-        self.description = description
-
-    def look(self, viewer):
-        if self.description:
-            return self.description
-        return "You see nothing remarkable about {0}.".format(self.name)
-
-
-class Item(Entity):
-    """An object which may be carried or equipped."""
-
-    def __init__(self, name, description="", wearable=False):
-        Entity.__init__(self, name, description)
-        self.wearable = wearable
-
-    def on_equip(self, player):
-        pass
-
-    def on_unequip(self, player):
-        pass
-
+from core import *
 
 class PimpHat(Item):
     def __init__(self):
@@ -237,119 +211,6 @@ class PimpHat(Item):
 
     def on_unequip(self, player):
         player.fabulousness -= 10
-
-
-class Room(object):
-    """Base class for a location.
-
-    Rooms are code, so subclasses may add arbitrary state and behaviour.
-    """
-
-    def __init__(self, room_id, name, description):
-        self.room_id = room_id
-        self.name = name
-        self.description = description
-        self.exits = {}
-        self.players = []
-        self.npcs = []
-        self.items = []
-        self.lock = threading.RLock()
-
-    def add_exit(self, direction, destination):
-        self.exits[direction.lower()] = destination
-
-    def add_npc(self, npc):
-        global NPC_MANAGER
-        with self.lock:
-            if npc not in self.npcs:
-                self.npcs.append(npc)
-                NPC_MANAGER.register(npc)
-                npc.room = self
-
-    def remove_npc(self, npc):
-        with self.lock:
-            if npc in self.npcs:
-                self.npcs.remove(npc)
-                npc.room = None
-
-    def enter(self, player, announce=True):
-        with self.lock:
-            if player not in self.players:
-                self.players.append(player)
-
-        player.room = self
-
-        for npc in self.npcs:
-            npc.on_player_enter(player)
-
-        if announce:
-            self.broadcast(
-                "* {0} arrives.".format(player.name),
-                exclude=player.session
-            )
-
-    def leave(self, player, announce=True):
-        with self.lock:
-            if player in self.players:
-                self.players.remove(player)
-
-        for npc in self.npcs:
-            npc.on_player_leave(player)
-
-        if announce:
-            self.broadcast(
-                "* {0} leaves.".format(player.name),
-                exclude=player.session
-            )
-
-    def broadcast(self, message, exclude=None):
-        with self.lock:
-            recipients = list(self.players)
-
-        for player in recipients:
-            session = player.session
-            if session is not None and session is not exclude:
-                session.send(message)
-
-    def describe_to(self, player):
-        player.session.send("")
-        player.session.send(self.name)
-        player.session.send("-" * len(self.name))
-        player.session.send(self.description)
-
-        with self.lock:
-            other_players = [
-                present.name
-                for present in self.players
-                if present is not player
-            ]
-            item_names = [item.name for item in self.items]
-
-            npc_names = [npc.name for npc in self.npcs]
-
-        if npc_names:
-           player.session.send("People here: {0}".format(", ".join(other_players + npc_names)) ) 
-        elif other_players:
-             player.session.send("People here: {0}".format(", ".join(other_players)))
-
-        if item_names:
-            player.session.send(
-                "Objects here: {0}".format(", ".join(item_names))
-            )
-
-        if self.exits:
-            player.session.send(
-                "Exits: {0}".format(", ".join(sorted(self.exits.keys())))
-            )
-        else:
-            player.session.send("There are no obvious exits.")
-
-    def on_command(self, session, command, arguments):
-        """Allow an individual room to handle custom commands.
-
-        Return True when the room handled the command.
-        """
-        return False
 
 
 class FabulousChamber(Room):
@@ -383,171 +244,8 @@ class FabulousChamber(Room):
                 "There are {0} magnificent pimp hats here!".format(hats)
             )
 
-class NPCManager(object):
-   def __init__(self):
-       self.npcs                  = []
-       self.lock                  = threading.RLock()
-       self._ticker_thread        = threading.Thread(target=self._run_ticker_thread)
-       self._ticker_thread.daemon = True
-       self.running               = False
 
-   def register(self, npc):
-       with self.lock:
-            if npc not in self.npcs:
-               self.npcs.append(npc)
-
-   def unregister(self, npc):
-       with self.lock:
-            self.npcs.remove(npc)
-
-   def tick(self):
-       with self.lock:
-            for npc in list(self.npcs):
-                npc.tick()
-
-   def _run_ticker_thread(self):
-       while self.running:
-          time.sleep(TICK_DELAY)
-          self.tick()
-
-   def start(self):
-       self.running = True
-       self._ticker_thread.start()
-   
-   def stop(self):
-       self.running = False
-       self._ticker_thread.join()
-
-
-class NPC(Entity):
-    """A living non-player character."""
-
-    def __init__(self, name, description=""):
-        global NPC_MANAGER
-        Entity.__init__(self, name, description)
-
-        self.room = None
-        self.flags = set()
-        self.keywords = []
-        self.inventory = []
-
-    def enter(self, room):
-        if self.room is not None:
-            self.room.remove_npc(self)
-
-        self.room = room
-        room.add_npc(self)
-
-    def on_player_enter(self, player):
-        """Called when a player enters the room."""
-        pass
-
-    def on_player_leave(self, player):
-        pass
-
-    def on_say(self, player, text):
-        """Player spoke aloud."""
-        pass
-
-    def on_emote(self, player, action):
-        pass
-
-    def tick(self):
-        """Periodic update."""
-        pass
-
-    def speak(self, text):
-        if self.room:
-            self.room.broadcast("<{0}> {1}".format(self.name, text))
-
-    def emote(self, text):
-        if self.room:
-            self.room.broadcast("* {0} {1}".format(self.name, text))
-
-class BraveSirKnight(NPC):
-
-    def __init__(self):
-        NPC.__init__(
-            self,
-            "Brave Sir Knight",
-            "A weary but honourable knight keeps watch over the crossroads."
-        )
-
-        self.idle_emotes = (
-            "looks along each of the four roads in turn.",
-            "adjusts his sword belt.",
-            "rests a gauntleted hand upon the pommel of his sword.",
-            "studies the distant horizon.",
-            "checks the leather straps of his armour.",
-            "nods politely to passing travellers.",
-            "straightens the weathered signpost.",
-            "draws a bucket of fresh water from the well.",
-            "adds another log to the campfire.",
-            "brushes dust from his tabard.",
-            "paces slowly around the crossroads.",
-            "examines the tracks left by recent wagons.",
-            "whistles a quiet marching tune.",
-            "offers a silent prayer for those upon the roads.",
-            "smiles faintly as birds sing in the hedgerow.",
-            "tightens the straps on his shield.",
-            "watches over the crossroads with quiet determination.",
-            "takes a slow drink from his waterskin.",
-            "stretches his weary shoulders.",
-            "sighs, but resumes his vigilant watch."
-        )
-
-        self.idle_speech = (
-            "May the roads be kind to all who travel them.",
-            "A peaceful day is a blessing.",
-            "I've stood this watch for many years.",
-            "The crossroads remember every traveller.",
-            "Keep your blade sharp and your heart kinder still.",
-            "No traveller should face the road alone.",
-        )
-
-        self._acted_last_tick = False
-        self._last_idle_emote = ""
-        self._last_idle_speech = ""
-
-    def tick(self):
-        if not self.room:
-           return
-
-        with self.room.lock:
-           if not self.room.players:
-              return
-
-        if random.randint(1, 10) > 1: # 10% chance of him doing something every tick
-           return
-
-        # stop him doing stuff two ticks in a row
-        if self._acted_last_tick:
-           self._acted_last_tick = False
-           return
-
-        self._acted_last_tick = True 
-        
-        roll = random.random()
-
-        if roll < 0.5:
-           chosen_speech = random.choice(self.idle_speech)
-           while chosen_speech == self._last_idle_speech:     # prevent him saying the same thing twice in a row too
-              chosen_speech = random.choice(self.idle_speech)
-           self.speak(chosen_speech)
-           self._last_idle_speech = chosen_speech
-        else:
-           chosen_emote = random.choice(self.idle_emotes)
-           while chosen_emote == self._last_idle_emote:
-              chosen_emote = random.choice(self.idle_emotes)
-           self.emote(chosen_emote)
-           self._last_idle_emote = chosen_emote
-
-    def on_player_enter(self, player):
-        self.speak(
-            "Welcome, traveller. Rest if thou art weary."
-        )
-        self._acted_last_tick = True # we count the inital greeting as acting so players aren't likely to immediately be spammed by him
-
+from npcs.brave_sir_knight import BraveSirKnight
 
 class Crossroads(Room):
    """ Built for Brave Sir Knight to guard
@@ -1444,7 +1142,7 @@ class World(object):
         self.starting_room = square
 
 
-NPC_MANAGER = NPCManager()
+NPC_MANAGER = NPCManager.instance() # just to init it
 WORLD = World()
 
 def valid_username(name):
@@ -1484,6 +1182,7 @@ class ThreadedMudServer(
 
 def main():
     global ADMIN_PASSWORD_HASH
+    global NPC_MANAGER
 
     init_user_database()
 
