@@ -13,13 +13,13 @@ class Colour:
     CYAN = "\033[36m"
     WHITE = "\033[37m"
 
-    BRIGHT_RED    = "\033[91m"
-    BRIGHT_GREEN  = "\033[92m"
-    BRIGHT_YELLOW = "\033[93m"
-    BRIGHT_BLUE   = "\033[94m"
-    BRIGHT_MAGENTA= "\033[95m"
-    BRIGHT_CYAN   = "\033[96m"
-    BRIGHT_WHITE  = "\033[97m"
+    BRIGHT_RED    = "\033[1;91m"
+    BRIGHT_GREEN  = "\033[1;92m"
+    BRIGHT_YELLOW = "\033[1;93m"
+    BRIGHT_BLUE   = "\033[1;94m"
+    BRIGHT_MAGENTA= "\033[1;95m"
+    BRIGHT_CYAN   = "\033[1;96m"
+    BRIGHT_WHITE  = "\033[1;97m"
 
 def colour(text, code):
     return code + text + Colour.RESET
@@ -132,7 +132,7 @@ class Room(object):
 
     def describe_to(self, player):
         player.session.send("")
-        player.session.send(self.name)
+        player.session.send(colour(self.name,Colour.BRIGHT_WHITE))
         player.session.send("-" * len(self.name))
         player.session.send(self.description)
 
@@ -157,9 +157,9 @@ class Room(object):
             )
 
         if self.exits:
-            player.session.send(
-                "Exits: {0}".format(", ".join(sorted(self.exits.keys())))
-            )
+            player.session.send("Exits:")
+            for e in self.exits.keys():
+                player.session.send("\t %s" % colour(e,Colour.BRIGHT_WHITE))
         else:
             player.session.send("There are no obvious exits.")
 

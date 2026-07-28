@@ -519,20 +519,18 @@ class Session(object):
 
     def login(self):
         self.send("")
-        self.send("Welcome to BlingMUD")
-        self.send("===================")
+        self.send(colour("Welcome to BlingMUD",Colour.BRIGHT_WHITE))
+        self.send(colour("===================",Colour.BRIGHT_WHITE))
         self.send("")
-        self.send("Type NEWUSER if you're new. Use all caps. Note that this a seperate service from IRC or whatever else is hosted by the admins")
+        self.send("Type %s if you're new. Use all caps. Note that this a seperate service from IRC or whatever else is hosted by the admins" % colour("NEWUSER",Colour.BRIGHT_WHITE))
         self.send("You will need to setup a new account if you've never used BlingMUD before")
         self.send("")
         self.send("BlingMUD is in heavy development right now - watch this space for updates!")
         self.send("")
-        self.send("As of 27th July 2026 at 23:38 BST, user accounts are usually persistent - remember this is alpha software, resets might still occur")
-        self.send("If you find your login fails and you get the NEWUSER insult screen, the user database probably got reset, oops")
         self.send("")
-        self.send("**** IMPORTANT ****")
+        self.send(colour("**** IMPORTANT ****",Colour.BRIGHT_RED))
         self.send("DO NOT reuse an important password here.")
-        self.send("Please also note that passwords will probably echo - you have been warned!")
+        self.send("Please also note that passwords will potentially echo - you have been warned!")
         self.send("")
 
         while self.running:
@@ -635,7 +633,6 @@ class Session(object):
                     self.send("That name is already registered.")
                     continue
             self.send("DO NOT USE A PASSWORD YOU USE SOMEWHERE ELSE - the admins do not accept any liability for any loss if you do")
-            self.send("Remember, this place is just for fun, it's not meant to be serious")
             self.prompt("Choose a password: ")
             password = self.read_line(hidden=True)
 
