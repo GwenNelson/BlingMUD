@@ -4,6 +4,16 @@ import time
 TICK_DELAY = 3.0
 
 class Colour:
+    UNDERLINE = "\033[4m" # i know, not a colour - but it makes sense here
+    BOLD      = "\033[1m"
+    DIM       = "\033[2m"
+
+    BOLD_OFF      = "\033[22m"
+    ITALIC_OFF    = "\033[23m"
+    UNDERLINE_OFF = "\033[24m"
+    REVERSE_OFF   = "\033[27m"
+    STRIKE_OFF    = "\033[29m"
+
     RESET = "\033[0m"
     RED = "\033[31m"
     GREEN = "\033[32m"
@@ -20,6 +30,8 @@ class Colour:
     BRIGHT_MAGENTA= "\033[1;95m"
     BRIGHT_CYAN   = "\033[1;96m"
     BRIGHT_WHITE  = "\033[1;97m"
+
+    TITLE = "\033[1;4;97m"
 
 def colour(text, code):
     return code + text + Colour.RESET
@@ -132,8 +144,8 @@ class Room(object):
 
     def describe_to(self, player):
         player.session.send("")
-        player.session.send(colour(self.name,Colour.BRIGHT_WHITE))
-        player.session.send("-" * len(self.name))
+        player.session.send(colour(self.name,Colour.TITLE))
+#        player.session.send("-" * len(self.name))
         player.session.send(self.description)
 
         with self.lock:

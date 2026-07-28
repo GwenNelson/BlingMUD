@@ -519,8 +519,7 @@ class Session(object):
 
     def login(self):
         self.send("")
-        self.send(colour("Welcome to BlingMUD",Colour.BRIGHT_WHITE))
-        self.send(colour("===================",Colour.BRIGHT_WHITE))
+        self.send(colour("Welcome to BlingMUD",Colour.TITLE))
         self.send("")
         self.send("Type %s if you're new. Use all caps. Note that this a seperate service from IRC or whatever else is hosted by the admins" % colour("NEWUSER",Colour.BRIGHT_WHITE))
         self.send("You will need to setup a new account if you've never used BlingMUD before")
