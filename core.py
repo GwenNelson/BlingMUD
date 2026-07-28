@@ -140,6 +140,116 @@ class Room(object):
         """
         return False
 
+class Player(Entity):
+    def __init__(self, name):
+        Entity.__init__(self, name, "A mysterious adventurer.")
+        self.session = None
+        self.room = None
+        self.is_admin = False
+        self.inventory = []
+        self.equipment = {}
+        self.fabulousness = 0
+
+    def find_item(self, name):
+        wanted = name.strip().lower()
+
+        for item in self.inventory:
+            if item.name.lower() == wanted:
+                return item
+
+        return None
+
+    def look(self, viewer):
+        lines = [colour(self.name, Colour.CYAN)]
+
+        if self.fabulousness <= -20:
+            lines.append(
+                "They somehow make a sack of potatoes look glamorous by comparison."
+            )
+
+        elif self.fabulousness < 0:
+            lines.append(
+                "Fashion appears to have lost a fight with reality."
+            )
+
+        elif self.fabulousness == 0:
+            lines.append(
+                "They look perfectly ordinary. Nothing sparkles."
+            )
+
+        elif self.fabulousness < 10:
+            lines.append(
+                "They seem pleasantly well dressed."
+            )
+
+        elif self.fabulousness < 20:
+            lines.append(
+                "There is a definite air of fabulousness about them."
+            )
+
+        elif self.fabulousness < 40:
+            lines.append(
+                "They radiate fabulousness with almost supernatural confidence."
+            )
+
+        elif self.fabulousness < 75:
+            lines.append(
+                "Looking directly at them requires sunglasses."
+            )
+
+        elif self.fabulousness < 100:
+            lines.append(
+                "Nearby rainbows appear to be taking fashion advice from them."
+            )
+
+        else:
+            lines.append(
+                colour(
+                    "WARNING: Fabulousness levels have exceeded all known safety limits.",
+                    Colour.MAGENTA
+                )
+            )
+            lines.append(
+                "Reality itself seems uncertain whether it is fabulous enough to continue existing."
+            )
+
+        if "head" in self.equipment:
+            lines.append(
+                "They are wearing an enormous fabulous pimp hat."
+            )
+
+        if viewer is self:
+            lines.append("")
+            lines.append(
+                "You admire yourself for a moment. Entirely understandable."
+            )
+
+        return "\n".join(lines)
+
+class Command(object):
+    name = None
+    aliases = ()
+    
+    admin_only = False
+
+    def execute(self, session, arguments):
+        raise NotImplementedError()
+
+
+COMMANDS = {}
+
+
+def register_command(command_class):
+    command = command_class()
+    names = [command.name]
+    names.extend(command.aliases)
+
+    for name in names:
+        COMMANDS[name.lower()] = command
+
+    return command_class
+
+
 
 
 class NPCManager(object):
