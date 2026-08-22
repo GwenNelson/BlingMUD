@@ -709,11 +709,11 @@ class Session(object):
         command = COMMANDS.get(command_name)
 
         if command is not None:
-           if command.admin_only and not session.player.is_admin:
-              session.send("You lack sufficient fabulousness.")
-              return
-           command.execute(self, arguments)
-           return
+            if command.admin_only and not self.player.is_admin:
+                self.send("You lack sufficient fabulousness.")
+                return
+            command.execute(self, arguments)
+            return
 
         if self.player.room.on_command(
             self,

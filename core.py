@@ -55,7 +55,7 @@ class Item(Entity):
     def __init__(self, name, description="", wearable=False, worn_where="Head"):
         Entity.__init__(self, name, description)
         self.wearable = wearable
-        self.worn_where = "Head"
+        self.worn_where = worn_where
 
     def on_equip(self, player):
         pass
@@ -381,4 +381,3 @@ class NPC(Entity):
     def emote(self, text):
         if self.room:
             self.room.broadcast("* {0} {1}".format(colour(self.name,Colour.BRIGHT_CYAN), text))
-
