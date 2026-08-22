@@ -95,6 +95,8 @@ Commands / UX
 ☐ Implement or improve `/flirt`.
 ☒ Add validated global and room-local command specs, generate list/detail help from live availability, and drive bounded command-token completion from Tab events.
 ☒ Canonicalize exact aliases and unique prefixes, filter admin-only candidates, and use expected-text compare-and-replace so delayed completion cannot overwrite newer input.
+☒ Dispatch ordinary room commands before globals, but reserve `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `quit`, and `exit` so rooms can never intercept them.
+☒ Reject duplicate global primary names or aliases atomically instead of silently replacing a registered command.
 ☐ Extend completion to safe argument candidates only where a future command explicitly declares a bounded provider.
 ☐ Make room-local verbs and NPC-specific interactions easier to define.
 

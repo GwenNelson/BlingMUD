@@ -1103,6 +1103,16 @@ class Session(object):
         else:
             arguments = ""
 
+        room = self.player.room
+
+        if command_name not in RESERVED_GLOBAL_COMMANDS and room is not None:
+            if room.on_command(
+                self,
+                command_name,
+                arguments
+            ):
+                return
+
         command = COMMANDS.get(command_name)
 
         if command is not None:
@@ -1110,13 +1120,6 @@ class Session(object):
                 self.send("You lack sufficient fabulousness.")
                 return
             command.execute(self, arguments)
-            return
-
-        if self.player.room.on_command(
-            self,
-            command_name,
-            arguments
-        ):
             return
 
         self.send(

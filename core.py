@@ -13,6 +13,16 @@ ROOM_ITEM_LIMIT = 100
 DEFAULT_MAX_HEALTH = 100
 MAX_HEALTH = 10000
 MAX_INTOXICATION = 100
+RESERVED_GLOBAL_COMMANDS = frozenset((
+    "admin",
+    "shutdown",
+    "kick",
+    "heal",
+    "save",
+    "adminstatus",
+    "quit",
+    "exit"
+))
 
 class Colour:
     UNDERLINE = "\033[4m" # i know, not a colour - but it makes sense here
@@ -91,6 +101,15 @@ class Room(object):
     command_specs = ()
 
     def __init__(self, room_id, name, description, time_source=None):
+        for spec in self.command_specs:
+            if not isinstance(spec, CommandSpec):
+                raise TypeError("room command_specs must contain CommandSpec")
+
+            if RESERVED_GLOBAL_COMMANDS.intersection(spec.names):
+                raise ValueError(
+                    "room commands cannot claim reserved global names"
+                )
+
         self.room_id = room_id
         self.name = name
         self.description = description
@@ -475,15 +494,28 @@ def register_command(command_class):
     names = [command.name]
     names.extend(command.aliases)
 
-    for name in names:
-        COMMANDS[name.lower()] = command
+    normalized_names = [name.lower() for name in names]
+
+    duplicates = [
+        name
+        for name in normalized_names
+        if name in COMMANDS
+    ]
+
+    if duplicates:
+        raise ValueError(
+            "command name already registered: {0}".format(duplicates[0])
+        )
+
+    for name in normalized_names:
+        COMMANDS[name] = command
 
     return command_class
 
 
 def command_specs_for_session(session, include_room=True):
-    """Return visible global specs, then current-room specs."""
-    specs = []
+    """Return visible current-room specs, then global fallbacks."""
+    global_specs = []
     seen_commands = set()
 
     for command in COMMANDS.values():
@@ -498,14 +530,15 @@ def command_specs_for_session(session, include_room=True):
         if spec.admin_only and not session.player.is_admin:
             continue
 
-        specs.append(spec)
+        global_specs.append(spec)
 
-    specs.sort(key=lambda spec: spec.name)
+    global_specs.sort(key=lambda spec: spec.name)
 
     if not include_room or session.player.room is None:
-        return specs
+        return global_specs
 
     room_specs = list(session.player.room.command_specs)
+    visible_room_specs = []
 
     for spec in room_specs:
         if not isinstance(spec, CommandSpec):
@@ -514,9 +547,9 @@ def command_specs_for_session(session, include_room=True):
         if spec.admin_only and not session.player.is_admin:
             continue
 
-        specs.append(spec)
+        visible_room_specs.append(spec)
 
-    return specs
+    return visible_room_specs + global_specs
 
 
 def find_command_spec(session, name):
