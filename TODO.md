@@ -27,15 +27,20 @@ Known bugs / first fixes
 ☒ Bound `NPCManager.stop()` so server shutdown cannot wait forever on a stuck ticker callback, and allow stop-before-start safely.
 ☒ Correct unsafe README language that described unencrypted Telnet as secure.
 ☒ Confine test temporary files to a repository-local, non-symlinked `.test-tmp` directory.
+☒ Bound client input so a connection cannot grow an in-memory line indefinitely.
+☒ Reject oversized stored password hashes and excessive PBKDF iteration counts before expensive work.
 ☐ Continue reviewing for obvious bugs and security issues before each new feature patch.
 
 Core engine
 
-☐ Formalize player save/load so character state is versioned and stable.
-☐ Keep auth data and gameplay state separate in the implementation.
+☒ Formalize current player save/load as bounded version-1 JSON with safe legacy-empty migration.
+☒ Keep auth decisions out of gameplay state; in particular, never persist or restore session admin privilege.
 ☐ Add encrypted transport or a secure front end before treating login as safe over untrusted networks.
-☐ Add autosave or logout-save for player state.
+☒ Save supported player state on logout before removing the player from their final room, while preserving the previous snapshot if serialization fails.
+☐ Add periodic autosave without adding an unbounded or uninterruptible background process.
 ☐ Add persistent IDs and templates for rooms, items, and world objects where needed.
+  ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat and royal possum bottle cap.
+  ☐ Register each future persistent item explicitly as its content patch lands; never deserialize arbitrary class names.
 ☐ Add room-aware NPC activity so empty rooms do not keep ticking.
 
 NPCs

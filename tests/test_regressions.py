@@ -175,6 +175,50 @@ class PasswordRegressionTests(unittest.TestCase):
         )
         self.assertFalse(blingmud.verify_password(None, "stored hash"))
 
+    def test_excessive_password_hash_cost_is_rejected_before_hashing(self):
+        stored_hash = "{0}${1}${2}${3}".format(
+            blingmud.PASSWORD_HASH_SCHEME,
+            blingmud.PASSWORD_HASH_MAX_ITERATIONS + 1,
+            "00" * blingmud.PASSWORD_SALT_BYTES,
+            "00" * blingmud.PASSWORD_DIGEST_BYTES
+        )
+
+        with mock.patch.object(
+            blingmud.hashlib,
+            "pbkdf2_hmac"
+        ) as derive_key:
+            self.assertFalse(
+                blingmud.verify_password("safe password", stored_hash)
+            )
+
+        derive_key.assert_not_called()
+
+    def test_password_hash_rejects_unbounded_input(self):
+        password = "x" * (blingmud.MAX_PASSWORD_LENGTH + 1)
+
+        with self.assertRaises(ValueError):
+            blingmud.password_hash(password)
+
+    def test_admin_password_read_detects_overlength_input(self):
+        original_hash = blingmud.ADMIN_PASSWORD_HASH
+        session = mock.Mock()
+        session.player = Player("WouldBeAdmin")
+        session.read_line.return_value = (
+            "x" * (blingmud.MAX_PASSWORD_LENGTH + 1)
+        )
+        blingmud.ADMIN_PASSWORD_HASH = "configured-but-not-used"
+
+        try:
+            blingmud.COMMANDS["admin"].execute(session, "")
+        finally:
+            blingmud.ADMIN_PASSWORD_HASH = original_hash
+
+        session.read_line.assert_called_once_with(
+            hidden=True,
+            maximum_length=blingmud.MAX_PASSWORD_LENGTH + 1
+        )
+        self.assertFalse(session.player.is_admin)
+
     def test_admin_hash_file_is_owner_only(self):
         descriptor, path = tempfile.mkstemp()
         os.close(descriptor)
@@ -209,7 +253,9 @@ class PasswordRegressionTests(unittest.TestCase):
             )
             answers = iter(("LegacyUser", "old password"))
             session.prompt = lambda prompt: None
-            session.read_line = lambda hidden=False: next(answers)
+            session.read_line = lambda hidden=False, maximum_length=None: next(
+                answers
+            )
 
             self.assertTrue(session.login())
 

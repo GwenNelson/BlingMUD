@@ -31,8 +31,8 @@ First fixes
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, stronger password storage with legacy migration, NPC-manager removal cleanup, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, and regression coverage for all of them.
-- Still planned: optional structured NPC memory, the `llm_fsm` advisory wrapper and OpenRouter failover, room-aware global scheduling, gameplay-state persistence hardening, admin tooling, transport security, and the village content from the email threads.
+- Implemented now: the first-fix engine bugs above, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with whitelisted item templates and logout save/load, NPC-manager removal cleanup, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, and regression coverage for all of them.
+- Still planned: persistence autosave and future schema migrations beyond the legacy-empty-to-v1 path, optional structured NPC memory, the `llm_fsm` advisory wrapper and OpenRouter failover, room-aware global scheduling, admin tooling, transport security, and the village content from the email threads.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 - OpenRouter remains design-only and explicitly deferred; implementation requires a later, explicit user authorization.
 
@@ -87,6 +87,11 @@ Persistence and character state
 - Add migrations for future schema evolution so new fields can be added without breaking old characters.
 - Keep auth data and gameplay state separate in the design, even if they initially live in the same SQLite database.
 - Password storage now uses salted PBKDF2-SHA256 and upgrades legacy SHA-256 hashes after a successful login; this is implemented, but Telnet transport remains unencrypted and must not be treated as secure authentication over an untrusted network.
+- [done: minimum layer] `player_state.py` owns version-1 JSON serialization and restoration for the state the game actually has today: room ID, fabulousness, inventory, and equipment. Empty legacy `{}` state migrates to safe version-1 defaults when loaded.
+- [done: minimum layer] Current item restoration is an explicit `pimp_hat` / `royal_possum_bottle_cap` template whitelist with bounded payload, inventory, equipment, stat, password, and input sizes. Unknown templates and inconsistent equipment fail closed; no save data controls imports or class names.
+- [done: minimum layer] Successful logins restore the last known room, with removed/unknown rooms falling back to the starting room. Disconnect saves before room removal, and a failed or lossy save leaves the previous database state intact while cleanup continues.
+- [security invariant] Admin privilege remains session-only and is deliberately absent from character JSON; never turn a gameplay save into an authentication or authorization source.
+- Still required here: periodic autosave, explicit migrations when version 2 is introduced, more item templates as real content lands, and eventual structured status/quest/relationship fields when those systems actually exist.
 
 Admin and operational tooling
 
@@ -430,7 +435,7 @@ Definitions
 
 Implementation order
 
-- Phase 1: fix the two concrete bugs, formalize player state persistence, and add the minimum save/load layer.
+- Phase 1: [done: minimum layer] fix the concrete engine/security bugs, formalize version-1 player state persistence, and save/load on login and disconnect. Periodic autosave remains a follow-up.
 - Phase 2: [partial] the generic NPC behavior system and Brave Sir Knight migration are complete; the room-aware global scheduler with empty-room suspension remains planned.
 - Phase 3: add OpenRouter integration, circuit breaker failover, structured JSON output, and priority budgeting for LLM-capable NPCs.
 - Phase 4: add admin/ops commands for NPC mode control, health checks, state inspection, and reloads.
@@ -447,6 +452,7 @@ Test plan
 - Verify failover from LLM to FSM on timeout, invalid JSON, or OpenRouter errors, and verify restoration after a healthy probe.
 - Verify priority ordering by simulating multiple active NPCs with different complexity and popularity scores.
 - Verify save/load round-trips for character state, inventory, equipment, and status effects.
+- The implemented minimum-layer tests now cover room/inventory/equipment/stat round trips, legacy empty state, corrupt/oversized/unknown state rejection, safe room fallback, versioned new accounts, login restoration, logout ordering, failed-save preservation, session-only admin state, bounded input, and bounded password work. Status effects remain unimplemented and therefore are still a future test target.
 - Verify the new room interactions from the email: `harvest acorn`, `browse scrap`, `talk eisele`, `read book`, `look mirror`, and the Wisp Mother / Val reaction paths.
 - Verify that the new content does not break the existing Crossroads and Fabulous Chamber demo rooms.
 
@@ -744,7 +750,7 @@ What exists vs what is still planned
   - simple item/equipment model
   - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
-  - persistent character state versioning and autosave
+  - persistence autosave, future version migrations, and schemas for status effects, quests, and relationships
   - empty-room suspension and room-aware scheduling
   - OpenRouter integration and LLM failover, deferred until explicitly re-authorized by the user
   - budgeted NPC priority system
@@ -763,9 +769,9 @@ Milestone 1: stabilize the current engine
 
 - Fix the command dispatcher bug and the wearable-slot bug first.
 - Add tests for both bugs.
-- Formalize player state serialization so saves and loads are stable.
-- Add a version field to player state data.
-- Add a minimal save on logout.
+- [done] Formalize player state serialization so saves and loads are stable and bounded.
+- [done] Add a version field to player state data and migrate legacy empty state to version 1.
+- [done] Add a minimal save on logout, performed before the player leaves their final room.
 - Add an autosave pass if practical without destabilizing the current threaded model.
 
 Milestone 2: generalize NPC behavior

@@ -11,13 +11,21 @@
 import os
 import time
 import random
-import json
 import sqlite3
 import hashlib
 import hmac
 import socketserver
+import sys
 import threading
 import traceback
+
+from player_state import (
+    MAX_PLAYER_STATE_BYTES,
+    PlayerStateError,
+    new_player_state_json,
+    restore_player_state,
+    serialize_player_state
+)
 
 USERS_DB = 'users.sqlite'
 HOST = "0.0.0.0"
@@ -33,7 +41,13 @@ ADMIN_PASSWORD_HASH = None
 
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 600000
+PASSWORD_HASH_MAX_ITERATIONS = 1200000
 PASSWORD_SALT_BYTES = 16
+PASSWORD_DIGEST_BYTES = 32
+MAX_PASSWORD_LENGTH = 4096
+MAX_STORED_PASSWORD_HASH_LENGTH = 512
+MAX_INPUT_LENGTH = 4096
+MAX_USERNAME_INPUT_LENGTH = 21
 
 IAC = 255
 WILL = 251
@@ -47,6 +61,12 @@ TELOPT_LINEMODE = 34
 
 def password_hash(password):
     """Return a salted, deliberately slow password hash for storage."""
+    if not isinstance(password, str):
+        raise TypeError("password must be text")
+
+    if len(password) > MAX_PASSWORD_LENGTH:
+        raise ValueError("password is too long")
+
     salt = os.urandom(PASSWORD_SALT_BYTES)
     encoded = password.encode("utf-8")
     digest = hashlib.pbkdf2_hmac(
@@ -66,10 +86,24 @@ def password_hash(password):
 
 def verify_password(password, stored_hash):
     """Verify current hashes and legacy unsalted SHA-256 hashes."""
-    if password is None or not stored_hash:
+    if not isinstance(password, str) or not isinstance(stored_hash, str):
+        return False
+
+    if not stored_hash or len(password) > MAX_PASSWORD_LENGTH:
+        return False
+
+    if len(stored_hash) > MAX_STORED_PASSWORD_HASH_LENGTH:
         return False
 
     if "$" not in stored_hash:
+        if len(stored_hash) != 64:
+            return False
+
+        try:
+            int(stored_hash, 16)
+        except ValueError:
+            return False
+
         legacy_digest = hashlib.sha256(
             password.encode("utf-8")
         ).hexdigest()
@@ -83,7 +117,13 @@ def verify_password(password, stored_hash):
     except (TypeError, ValueError):
         return False
 
-    if scheme != PASSWORD_HASH_SCHEME or iterations <= 0:
+    if (
+        scheme != PASSWORD_HASH_SCHEME
+        or iterations <= 0
+        or iterations > PASSWORD_HASH_MAX_ITERATIONS
+        or len(salt) != PASSWORD_SALT_BYTES
+        or len(expected_digest) != PASSWORD_DIGEST_BYTES
+    ):
         return False
 
     actual_digest = hashlib.pbkdf2_hmac(
@@ -177,7 +217,7 @@ def create_user(username, password):
                 username,
                 username.lower(),
                 password_hash(password),
-                json.dumps({})
+                new_player_state_json()
             )
         )
 
@@ -212,7 +252,7 @@ def load_user(username):
         return {
             "username": row[0],
             "password": row[1],
-            "state": json.loads(row[2])
+            "state_json": row[2]
         }
 
     finally:
@@ -228,6 +268,39 @@ def update_user_password_hash(username, new_password_hash):
             "UPDATE users SET password_hash=? WHERE username_lower=?",
             (new_password_hash, username.lower())
         )
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def update_user_state(username, encoded_state):
+    if not isinstance(encoded_state, str):
+        raise TypeError("encoded state must be text")
+
+    if len(encoded_state) > MAX_PLAYER_STATE_BYTES:
+        raise PlayerStateError("player state is too large")
+
+    try:
+        encoded_size = len(encoded_state.encode("utf-8"))
+    except UnicodeError:
+        raise PlayerStateError("player state contains invalid text")
+
+    if encoded_size > MAX_PLAYER_STATE_BYTES:
+        raise PlayerStateError("player state is too large")
+
+    connection = sqlite3.connect(USERS_DB)
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "UPDATE users SET json_state=? WHERE username_lower=?",
+            (encoded_state, username.lower())
+        )
+
+        if cursor.rowcount != 1:
+            raise PlayerStateError("cannot save an unknown player")
+
         connection.commit()
 
     finally:
@@ -290,8 +363,16 @@ class AdminCommand(Command):
             return
         session.prompt("Password: ")
 
-        try_admin_pwd = session.read_line(hidden=True)
-        if verify_password(try_admin_pwd, ADMIN_PASSWORD_HASH):
+        try_admin_pwd = session.read_line(
+            hidden=True,
+            maximum_length=MAX_PASSWORD_LENGTH + 1
+        )
+
+        if (
+            try_admin_pwd is not None
+            and len(try_admin_pwd) <= MAX_PASSWORD_LENGTH
+            and verify_password(try_admin_pwd, ADMIN_PASSWORD_HASH)
+        ):
            if password_hash_needs_upgrade(ADMIN_PASSWORD_HASH):
                upgraded_hash = password_hash(try_admin_pwd)
 
@@ -385,6 +466,7 @@ class Session(object):
         self.current_input = ""
         self.input_active = False
         self.input_hidden = False
+        self.login_room = None
 
     def enable_character_mode(self):
         """Ask a real Telnet client to use server-side character input."""
@@ -508,7 +590,7 @@ class Session(object):
         return "".join(result)
 
 
-    def read_line(self, hidden=False):
+    def read_line(self, hidden=False, maximum_length=MAX_INPUT_LENGTH):
         """Read and edit one line using server-side character echo."""
 
         characters = []
@@ -565,6 +647,9 @@ class Session(object):
 
             # Ignore other ASCII control characters for now.
             if byte < 32:
+                continue
+
+            if len(characters) >= maximum_length:
                 continue
 
             character = bytes((byte,)).decode("utf-8", "replace")
@@ -625,7 +710,7 @@ class Session(object):
 
         while self.running:
             self.prompt("Name: ")
-            name = self.read_line()
+            name = self.read_line(maximum_length=MAX_USERNAME_INPUT_LENGTH)
 
             if name is None:
                 return False
@@ -674,10 +759,17 @@ class Session(object):
 
             self.send("Please note, your password input might echo - meaning people might see you typing it")
             self.prompt("Password: ")
-            password = self.read_line(hidden=True)
+            password = self.read_line(
+                hidden=True,
+                maximum_length=MAX_PASSWORD_LENGTH + 1
+            )
 
             if password is None:
                 return False
+
+            if len(password) > MAX_PASSWORD_LENGTH:
+                self.send("That password is too long.")
+                continue
 
             if not verify_password(password, account["password"]):
                 self.send("Incorrect password.")
@@ -687,14 +779,42 @@ class Session(object):
                 with USERS_LOCK:
                     update_user_password_hash(name, password_hash(password))
 
-            with SESSIONS_LOCK:
-                if key in SESSIONS:
-                    self.send("That user is already connected.")
-                    continue
+            player = Player(account["username"])
+            player.session = self
+            invalid_state = False
 
-                self.player = Player(account["username"])
-                self.player.session = self
-                SESSIONS[key] = self
+            try:
+                login_room = restore_player_state(
+                    player,
+                    account["state_json"],
+                    self.world
+                )
+            except PlayerStateError:
+                sys.stderr.write(
+                    "Invalid saved state for {0}; using safe defaults.\n".format(
+                        account["username"]
+                    )
+                )
+                invalid_state = True
+                login_room = self.world.starting_room
+
+            with SESSIONS_LOCK:
+                already_connected = key in SESSIONS
+
+                if not already_connected:
+                    self.player = player
+                    self.login_room = login_room
+                    SESSIONS[key] = self
+
+            if already_connected:
+                self.send("That user is already connected.")
+                continue
+
+            if invalid_state:
+                self.send(
+                    "Your saved character state was invalid, so this "
+                    "session is starting from safe defaults."
+                )
 
             return True
 
@@ -706,7 +826,7 @@ class Session(object):
 
         while self.running:
             self.prompt("Choose a name: ")
-            name = self.read_line()
+            name = self.read_line(maximum_length=MAX_USERNAME_INPUT_LENGTH)
 
             if name is None:
                 return False
@@ -728,20 +848,34 @@ class Session(object):
                     continue
             self.send("DO NOT USE A PASSWORD YOU USE SOMEWHERE ELSE - the admins do not accept any liability for any loss if you do")
             self.prompt("Choose a password: ")
-            password = self.read_line(hidden=True)
+            password = self.read_line(
+                hidden=True,
+                maximum_length=MAX_PASSWORD_LENGTH + 1
+            )
 
             if password is None:
                 return False
+
+            if len(password) > MAX_PASSWORD_LENGTH:
+                self.send("That password is too long.")
+                continue
 
             if len(password) < 12:
                 self.send("Please use at least twelve characters.")
                 continue
 
             self.prompt("Confirm password: ")
-            confirmation = self.read_line(hidden=True)
+            confirmation = self.read_line(
+                hidden=True,
+                maximum_length=MAX_PASSWORD_LENGTH + 1
+            )
 
             if confirmation is None:
                 return False
+
+            if len(confirmation) > MAX_PASSWORD_LENGTH:
+                self.send("That password confirmation is too long.")
+                continue
 
             if password != confirmation:
                 self.send("The passwords did not match.")
@@ -759,6 +893,7 @@ class Session(object):
             with SESSIONS_LOCK:
                 self.player = Player(name)
                 self.player.session = self
+                self.login_room = self.world.starting_room
                 SESSIONS[key] = self
 
             self.send("Account created.")
@@ -837,8 +972,9 @@ class Session(object):
             self.send("More importantly, try /bling.")
             self.send("")
 
-            self.world.starting_room.enter(self.player)
-            self.world.starting_room.describe_to(self.player)
+            entry_room = self.login_room or self.world.starting_room
+            entry_room.enter(self.player)
+            entry_room.describe_to(self.player)
 
             while self.running:
                 self.prompt("> ")
@@ -869,6 +1005,19 @@ class Session(object):
 
         if self.player is not None:
             player = self.player
+
+            try:
+                encoded_state = serialize_player_state(player)
+
+                with USERS_LOCK:
+                    update_user_state(player.name, encoded_state)
+            except (PlayerStateError, sqlite3.Error) as error:
+                sys.stderr.write(
+                    "Could not save player state for {0}: {1}\n".format(
+                        player.name,
+                        error
+                    )
+                )
 
             if player.room is not None:
                 player.room.leave(player)

@@ -49,10 +49,14 @@ Project-specific guidance:
 - Put small location-specific verbs in `Room.on_command()` and return `False` for unrelated commands so global dispatch and other rooms remain unaffected.
 - Keep the codebase compatible with the current threaded telnet architecture unless the roadmap says otherwise.
 - If a change affects persistence, NPC brains, room triggers, or AI fallback, be careful to preserve save/load and failure-mode behavior.
+- Player saves are versioned JSON handled by `player_state.py`: keep payloads and collections bounded, instantiate items only through the explicit template whitelist, reject lossy saves, and fall back safely when stored state is malformed. Never replace this with pickle, dynamic imports, or arbitrary class names from save data.
+- Administrative privilege is authenticated per session and must not be restored from character JSON. Persisted equipment must refer to an item in the persisted inventory, and room locations must resolve through the current world's room IDs or fall back to the starting room.
+- Save character state before removing a disconnecting player from their room so the last valid room ID is retained. Save failures must preserve the prior database snapshot and must not prevent session/room cleanup.
 - OpenRouter and every other LLM provider are optional enhancements: missing or invalid provider configuration must disable remote calls cleanly, never prevent startup, and never stop the MUD or its NPCs from working locally.
 - OpenRouter implementation is currently deferred and requires fresh, explicit user authorization; do not add provider code merely because it remains on the roadmap.
 - Every LLM-capable NPC must have a complete FSM or simpler fallback, and tests must cover operation with no API key and no network.
 - Never hard-code, commit, prompt with, display, or ordinarily log provider API keys or other secrets.
 - Treat raised callback exceptions and non-returning callbacks as different failure modes: exceptions are currently isolated, but a non-returning trusted behavior can still occupy the sequential global ticker until the scheduler gains cooperative deadlines or equivalent isolation.
 - Password hashes use salted PBKDF2-SHA256; preserve verification and successful-login migration for legacy SHA-256 records until a deliberate migration removes that compatibility path.
+- Keep input and password-work bounds intact: client lines are finite, stored hash fields are size-checked, and untrusted PBKDF iteration counts must be rejected before key derivation.
 - Do not describe the current plain Telnet connection as secure transport, even though stored password hashing has been hardened.
