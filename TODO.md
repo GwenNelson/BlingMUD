@@ -37,13 +37,18 @@ NPCs
 ☒ Deliver player speech and `/me` events to NPC behaviors.
 ☒ Isolate NPC callback failures so one broken behavior does not stop room event delivery or the global ticker.
 ☒ Route Brave Sir Knight's existing FSM through the shared behavior contract without changing his intended behavior.
+☒ Add validated, ordered speech/emote actions as structured behavior output.
 ☐ Add reusable behavior implementations so a single NPC can be:
-  ☐ simple random chatter
+  ☒ simple random chatter
   ☐ deterministic FSM
   ☐ FSM with optional LLM assistance
 ☐ Re-express Brave Sir Knight's procedural state machine using the reusable FSM implementation once it exists.
 ☐ Make NPC memory structured and optional.
 ☐ Add fallback from LLM to FSM when the provider is unavailable.
+☐ Make OpenRouter configuration optional: missing or incomplete keys/settings must disable remote calls without preventing startup.
+☐ Require every LLM-capable NPC to declare an FSM or simpler local fallback.
+☐ Test that the complete MUD remains playable with no API key, no network, exhausted AI budget, and sustained provider failure.
+☐ Keep API keys out of source control, prompts, admin output, and ordinary logs.
 ☐ Add OpenRouter support behind a local adapter, with validation and a circuit breaker.
 ☐ Add token/budget gating so low-priority NPCs stay on simpler behavior.
 

@@ -27,17 +27,17 @@ First fixes
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, stronger password storage with legacy migration, NPC-manager removal cleanup, the shared NPC behavior/event-dispatch contract, Brave Sir Knight's compatibility migration onto that contract, and regression coverage for all of them.
-- Still planned: reusable random and data-backed FSM behaviors, OpenRouter failover, room-aware scheduling, gameplay-state persistence hardening, admin tooling, transport security, and the village content from the email threads.
+- Implemented now: the first-fix engine bugs above, stronger password storage with legacy migration, NPC-manager removal cleanup, the shared NPC behavior/event-dispatch contract, validated structured speech/emote actions, reusable local random behavior, Brave Sir Knight's compatibility migration onto the contract, and regression coverage for all of them.
+- Still planned: the data-backed FSM implementation, OpenRouter failover, room-aware scheduling, gameplay-state persistence hardening, admin tooling, transport security, and the village content from the email threads.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 
 NPC architecture
 
-- Implemented foundation: `NPCBehavior` now owns the common enter, leave, speech, emote, and tick contract; `NPC` delegates those hooks to its bound behavior; rooms now deliver speech and emote observations; one broken NPC is isolated from other event recipients and ticker participants; and Brave Sir Knight runs his existing hand-authored FSM through an explicitly declared `fsm` behavior adapter.
-- Still planned in this layer: structured action output, generic random chatter, reusable data-backed FSM definitions, optional structured memory, activation/deactivation events, and the `llm_fsm` advisory wrapper. Brave Sir Knight's state machine remains hand-authored during the compatibility stage and should become the regression fixture for the generic FSM implementation.
-- [done: contract stage] Extract a generic NPC behavior contract from the existing Brave Sir Knight implementation so NPCs can declare simple random, deterministic FSM, or LLM-assisted modes; the concrete reusable implementations remain planned.
+- Implemented foundation: `NPCBehavior` now owns the common enter, leave, speech, emote, and tick contract; `NPC` delegates those hooks to its bound behavior; rooms now deliver speech and emote observations; one broken NPC is isolated from other event recipients and ticker participants; behavior output can contain one or more validated speech/emote `NPCAction` objects; `SimpleRandomBehavior` provides timed local chatter and optional event reactions; and Brave Sir Knight runs his existing hand-authored FSM through an explicitly declared `fsm` behavior adapter.
+- Still planned in this layer: reusable data-backed FSM definitions, additional validated action types as game mechanics require them, optional structured memory, activation/deactivation events, and the `llm_fsm` advisory wrapper. Brave Sir Knight's state machine remains hand-authored during the compatibility stage and should become the regression fixture for the generic FSM implementation.
+- [done: contract stage] Extract a generic NPC behavior contract from the existing Brave Sir Knight implementation so NPCs can declare simple random, deterministic FSM, or LLM-assisted modes; the reusable FSM and LLM-assisted implementations remain planned.
 - [partial: compatibility stage] Treat Brave Sir Knight as the first concrete migration target: his current state machine behavior now runs through the shared contract, but it still needs to be expressed through the reusable data-backed FSM layer instead of its bespoke procedural implementation.
-- Make “random utterance NPCs” the simplest possible behavior class: a small speech pool, optional emotes, no state machine, no LLM.
+- [done] Make “random utterance NPCs” the simplest possible behavior class: `SimpleRandomBehavior` supports weighted ambient speech/emote pools, timed output, optional local event reactions, no state machine, and no LLM.
 - Make FSM NPCs data-driven: states, transitions, timers, enter/leave hooks, and event reactions should all be describable without rewriting engine code.
 - Make LLM NPCs an optional wrapper, not the authority: the LLM should propose structured actions and text, while the engine still validates them against the NPC’s current state and allowed event set.
 - Keep the current `on_player_enter`, `on_player_leave`, `on_say`, `on_emote`, and `tick` hooks, but route them through a single behavior interface so each NPC can choose its execution style.
@@ -45,6 +45,11 @@ NPC architecture
 
 OpenRouter and failover
 
+- OpenRouter must be entirely optional. On startup and configuration reload, check for the API key and all required provider settings before constructing or enabling the remote brain client.
+- Read secrets from deployment configuration such as environment variables or an ignored local secrets file; never hard-code an API key, commit it, include it in prompts, expose it through admin output, or write it to ordinary logs.
+- If the API key or any required OpenRouter setting is absent, empty, malformed, or explicitly disabled, mark the provider as `disabled_by_config`, make no remote requests, and run every affected NPC through its declared FSM or simpler local fallback.
+- An LLM-capable NPC definition is invalid unless it also declares a complete local fallback behavior. Content loading should reject or safely downgrade definitions that would become unusable without the provider.
+- The server, login flow, rooms, commands, persistence, NPC event delivery, and all required game mechanics must start and remain functional with no LLM configuration, no network access, exhausted budget, or a sustained provider outage.
 - Add a central brain client in the server process that talks to OpenRouter asynchronously so gameplay threads never block directly on remote calls.
 - Use config-driven model tiers rather than hard-coded model names: a cheap tier for casual chatter, a mid tier for more nuanced dialogue, and a premium tier only for rare, high-value interactions.
 - Gate all OpenRouter usage behind a health-checked circuit breaker: on timeout, 429, 5xx, invalid JSON, or schema mismatch, mark the remote brain unhealthy and fail over to FSM-only mode.
@@ -376,7 +381,7 @@ Implementation order by system
 - Core NPC engine:
   - [done: contract stage] abstract the behavior interface
   - [partial: compatibility stage] migrate Brave Sir Knight onto it; generic FSM conversion remains
-  - add simple random NPCs
+  - [done] add simple random NPC behavior
   - add FSM NPCs
 - LLM layer:
   - add OpenRouter adapter
@@ -460,11 +465,13 @@ NPC behavior model
   - decision output
   - memory update
   - fallback to non-LLM mode
-- Output from behaviors should be structured actions, not raw strings. Raw strings are only one possible action inside a larger event packet.
+- [done for speech/emotes] Output from behaviors is expressed as ordered, validated actions rather than raw return strings. Extend the action schema only as new engine-supported mechanics require it.
 
 OpenRouter usage
 
 - OpenRouter should be treated as an implementation detail behind a local brain adapter.
+- Provider configuration should have an explicit enabled/disabled result. Missing credentials or incomplete settings mean locally disabled, not a startup error and not a reason to retry network calls.
+- Configuration validation should distinguish `disabled_by_config` from runtime states such as `healthy`, `rate_limited`, and `circuit_open`, while all non-healthy states select local NPC behavior.
 - The adapter should be responsible for:
   - prompt assembly
   - request throttling
@@ -717,13 +724,15 @@ What exists vs what is still planned
   - Brave Sir Knight as a rich, hand-authored FSM-style NPC
   - a shared NPC behavior contract for enter, leave, speech, emote, and tick events
   - room delivery of player speech and emotes to NPC behaviors
+  - validated, ordered speech/emote action output from NPC behaviors
+  - reusable timed random chatter and event reactions with no LLM dependency
   - Brave Sir Knight attached to the shared contract through an `fsm` compatibility behavior
   - Crossroads and Fabulous Chamber demo content
   - simple item/equipment model
   - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
   - persistent character state versioning and autosave
-  - generic random-chatter and data-backed FSM behavior implementations
+  - data-backed FSM behavior implementation
   - empty-room suspension and room-aware scheduling
   - OpenRouter integration and LLM failover
   - budgeted NPC priority system
@@ -751,19 +760,21 @@ Milestone 2: generalize NPC behavior
 
 - [done: foundation] Extract behavior modes into a shared abstraction and route all existing NPC hooks through it.
 - [done: compatibility stage] Preserve Brave Sir Knight’s current behavior while moving him onto the shared contract; his FSM definition is still procedural and must later be expressed through the generic FSM implementation.
-- Add basic random-chatter NPC support.
+- [done] Add basic random-chatter NPC support.
 - Add data-backed FSM support.
 - [done] Make the engine expose enter/leave/say/emote/tick events through one contract.
 - Add NPC memory as structured state rather than ad hoc fields.
 
 Milestone 3: add LLM support with fallback
 
+- Add optional provider configuration loading and validation; prove that an entirely absent OpenRouter configuration starts normally and makes zero provider calls.
 - Add the local brain adapter that can talk to OpenRouter.
 - Define the JSON event output contract.
 - Add validation and a circuit breaker.
 - Add failover from LLM to FSM when the provider is unhealthy.
 - Add re-probe logic to return to LLM mode only after recovery.
 - Ensure the fallback path is the default path for cold rooms and low-priority NPCs.
+- Add tests for missing keys, incomplete configuration, explicit disablement, no network, exhausted budget, provider errors, and recovery; all failure cases must leave the MUD playable through local behavior.
 
 Milestone 4: add scheduler and priority logic
 

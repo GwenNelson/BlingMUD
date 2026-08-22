@@ -38,8 +38,12 @@ Project-specific guidance:
 - Preserve the distinction between real implemented behavior and planned content.
 - Treat Brave Sir Knight as the baseline example for NPC behavior design.
 - Route new NPC decision logic through `NPCBehavior`; do not add new direct NPC hook overrides that bypass the shared behavior contract.
+- New behaviors should return validated `NPCAction` instances; preserve ordered multi-action output and do not let remote or data-driven behavior broadcast unvalidated text directly.
 - Player speech and emotes reach NPCs through the room notification methods; preserve that delivery path when changing chat or command handling.
 - Keep the codebase compatible with the current threaded telnet architecture unless the roadmap says otherwise.
 - If a change affects persistence, NPC brains, room triggers, or AI fallback, be careful to preserve save/load and failure-mode behavior.
+- OpenRouter and every other LLM provider are optional enhancements: missing or invalid provider configuration must disable remote calls cleanly, never prevent startup, and never stop the MUD or its NPCs from working locally.
+- Every LLM-capable NPC must have a complete FSM or simpler fallback, and tests must cover operation with no API key and no network.
+- Never hard-code, commit, prompt with, display, or ordinarily log provider API keys or other secrets.
 - Password hashes use salted PBKDF2-SHA256; preserve verification and successful-login migration for legacy SHA-256 records until a deliberate migration removes that compatibility path.
 - Do not describe the current plain Telnet connection as secure transport, even though stored password hashing has been hardened.

@@ -7,7 +7,16 @@ import sys
 import tempfile
 
 import blingmud
-from core import Item, NPC, NPCBehavior, NPCManager, Player, Room
+from core import (
+    Item,
+    NPC,
+    NPCAction,
+    NPCBehavior,
+    NPCManager,
+    Player,
+    Room,
+    SimpleRandomBehavior
+)
 from npcs.brave_sir_knight import BraveSirKnight
 
 
@@ -183,6 +192,33 @@ class FailingBehavior(NPCBehavior):
         raise RuntimeError("broken tick handler")
 
 
+class MultipleActionBehavior(NPCBehavior):
+    def on_say(self, player, text):
+        return (
+            NPCAction.emote("considers the question."),
+            NPCAction.say("I have an answer.")
+        )
+
+
+class FixedRandom(object):
+    def uniform(self, minimum, maximum):
+        return minimum
+
+    def choice(self, choices):
+        return choices[0]
+
+    def random(self):
+        return 0.0
+
+
+class FakeClock(object):
+    def __init__(self, now=0.0):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
 class NPCBehaviorTests(unittest.TestCase):
     def test_npc_delegates_every_event_to_its_behavior(self):
         behavior = RecordingBehavior()
@@ -303,6 +339,186 @@ class NPCBehaviorTests(unittest.TestCase):
             sys.stderr = original_stderr
 
         self.assertEqual(recording_behavior.events, [("tick",)])
+
+
+class NPCActionTests(unittest.TestCase):
+    def test_action_validation_rejects_unsupported_or_unsafe_output(self):
+        with self.assertRaises(ValueError):
+            NPCAction("invent_item", "a diamond")
+
+        with self.assertRaises(ValueError):
+            NPCAction.say("")
+
+        with self.assertRaises(ValueError):
+            NPCAction.say("first line\nsecond line")
+
+        with self.assertRaises(TypeError):
+            NPCAction.say(None)
+
+    def test_npc_executes_validated_speech_and_emote_actions(self):
+        npc = NPC("Performer")
+        output = []
+        npc.speak = lambda text: output.append(("say", text))
+        npc.emote = lambda text: output.append(("emote", text))
+
+        npc.perform_action(NPCAction.say("Hello."))
+        npc.perform_action(NPCAction.emote("waves."))
+
+        self.assertEqual(
+            output,
+            [("say", "Hello."), ("emote", "waves.")]
+        )
+
+    def test_mutated_action_is_validated_again_before_execution(self):
+        npc = NPC("Performer")
+        action = NPCAction.say("Safe text")
+        action.text = "unsafe\ntext"
+
+        with self.assertRaises(ValueError):
+            npc.perform_action(action)
+
+    def test_behavior_can_return_multiple_ordered_actions(self):
+        npc = NPC("Performer", behavior=MultipleActionBehavior())
+        output = []
+        npc.speak = lambda text: output.append(("say", text))
+        npc.emote = lambda text: output.append(("emote", text))
+
+        actions = npc.on_say(Player("Visitor"), "Any thoughts?")
+
+        self.assertEqual(len(actions), 2)
+        self.assertEqual(
+            output,
+            [
+                ("emote", "considers the question."),
+                ("say", "I have an answer.")
+            ]
+        )
+
+
+class SimpleRandomBehaviorTests(unittest.TestCase):
+    def _make_behavior(self, clock, **settings):
+        defaults = {
+            "minimum_delay": 5.0,
+            "maximum_delay": 5.0,
+            "random_source": FixedRandom(),
+            "time_source": clock
+        }
+        defaults.update(settings)
+        return SimpleRandomBehavior(**defaults)
+
+    def test_ambient_action_waits_for_due_time_and_player_presence(self):
+        clock = FakeClock()
+        behavior = self._make_behavior(
+            clock,
+            speech=("Lovely weather.",),
+            emotes=("checks the sky.",)
+        )
+        npc = NPC("Local", behavior=behavior)
+        room = Room("random_test", "Random Test", "A test room.")
+        output = []
+        npc.speak = lambda text: output.append(("say", text))
+        npc.emote = lambda text: output.append(("emote", text))
+        room.add_npc(npc)
+
+        try:
+            clock.now = 5.0
+            npc.tick()
+            self.assertEqual(output, [])
+
+            player = Player("Visitor")
+            room.players.append(player)
+            npc.tick()
+
+            self.assertEqual(output, [("say", "Lovely weather.")])
+            self.assertEqual(behavior.next_action_time, 10.0)
+        finally:
+            room.remove_npc(npc)
+
+    def test_optional_event_reactions_return_structured_actions(self):
+        clock = FakeClock()
+        behavior = self._make_behavior(
+            clock,
+            entry_speech=("Welcome!",),
+            departure_speech=("Safe travels!",),
+            speech_replies=("Indeed.",),
+            emote_reactions=("nods in agreement.",)
+        )
+        npc = NPC("Local", behavior=behavior)
+        player = Player("Visitor")
+        output = []
+        npc.speak = lambda text: output.append(("say", text))
+        npc.emote = lambda text: output.append(("emote", text))
+
+        npc.on_player_enter(player)
+        npc.on_say(player, "Hello")
+        npc.on_emote(player, "waves")
+        npc.on_player_leave(player)
+
+        self.assertEqual(
+            output,
+            [
+                ("say", "Welcome!"),
+                ("say", "Indeed."),
+                ("emote", "nods in agreement."),
+                ("say", "Safe travels!")
+            ]
+        )
+
+    def test_departing_player_receives_random_behavior_farewell(self):
+        clock = FakeClock()
+        behavior = self._make_behavior(
+            clock,
+            departure_speech=("Safe travels!",)
+        )
+        npc = NPC("Local", behavior=behavior)
+        room = Room("farewell_test", "Farewell Test", "A test room.")
+        request = DummyRequest()
+        session = blingmud.Session(
+            request,
+            ("127.0.0.1", 0),
+            blingmud.WORLD
+        )
+        player = Player("Visitor")
+        player.session = session
+        session.player = player
+        room.add_npc(npc)
+
+        try:
+            room.enter(player, announce=False)
+            request.sent = []
+            room.leave(player, announce=False)
+
+            transcript = b"".join(request.sent).decode("utf-8")
+            self.assertIn("Safe travels!", transcript)
+        finally:
+            room.remove_npc(npc)
+
+    def test_empty_pools_and_invalid_configuration_are_safe(self):
+        clock = FakeClock()
+        behavior = self._make_behavior(clock)
+        npc = NPC("Quiet", behavior=behavior)
+        room = Room("quiet_test", "Quiet Test", "A test room.")
+        room.players.append(Player("Visitor"))
+        room.add_npc(npc)
+
+        try:
+            clock.now = 5.0
+            self.assertEqual(npc.tick(), ())
+            self.assertEqual(behavior.next_action_time, 10.0)
+        finally:
+            room.remove_npc(npc)
+
+        with self.assertRaises(ValueError):
+            SimpleRandomBehavior(minimum_delay=10.0, maximum_delay=5.0)
+
+        with self.assertRaises(ValueError):
+            SimpleRandomBehavior(speech_weight=-1.0)
+
+    def test_single_string_is_treated_as_one_pool_entry(self):
+        clock = FakeClock()
+        behavior = self._make_behavior(clock, speech="A complete sentence.")
+
+        self.assertEqual(behavior.speech, ("A complete sentence.",))
 
 
 if __name__ == "__main__":
