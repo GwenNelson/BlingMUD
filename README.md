@@ -28,6 +28,8 @@ Global and room-local commands declare validated usage, aliases and summaries th
 
 Ordinary room-local commands override a global command of the same name or alias, allowing a location to give a verb special meaning. Safety and administrative names always bypass rooms: `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `quit`, and `exit`. Global command registration rejects duplicate primary names or aliases atomically instead of silently replacing an existing command.
 
+Equipment can be removed with `/unequip <item or slot>` or `/remove <item or slot>`. The item stays in inventory, its `on_unequip()` effect runs once, and room occupants see the removal.
+
 Runtime limits are intentionally modest: 64 total connections, 32 login connections, 32 authenticated players, 8 connections per source address, a 120-second login idle timeout, and a 256 KiB output queue per connection. Five failed logins for one address/account pair within five minutes are blocked, and one address may create at most three accounts per hour. Authenticated players receive an audible warning after ten idle hours and are saved and disconnected after twelve.
 
 Active characters are considered for autosave every 60 seconds. The engine serializes only characters whose state lock is immediately available, compares the bounded JSON snapshot with the last submitted snapshot, and sends changed state to one coalescing persistence writer. Busy characters are retried on the next pass. Logout waits for its final queued snapshot; server shutdown gives gameplay workers and the writer one shared ten-second flush deadline and reports anything that fails to stop.

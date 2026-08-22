@@ -372,6 +372,57 @@ class EquipCommand(Command):
         player.session.send("You equip the {0}.".format(colour(item.name,Colour.BRIGHT_GREEN)))
         item.on_equip(player)
 
+
+@register_command
+class UnequipCommand(Command):
+    name = "unequip"
+    aliases = ("remove",)
+    usage = "/unequip <item or slot>"
+    summary = "Stop wearing an item while keeping it in your inventory."
+
+    def execute(self, session, arguments):
+        player = session.player
+        wanted = arguments.strip().lower()
+
+        if not wanted:
+            session.send("Unequip what?")
+            return
+
+        selected_slot = None
+        selected_item = None
+
+        for slot, item in player.equipment.items():
+            if slot.lower() == wanted:
+                selected_slot = slot
+                selected_item = item
+                break
+
+        if selected_item is None:
+            for slot, item in player.equipment.items():
+                if item.name.lower() == wanted:
+                    selected_slot = slot
+                    selected_item = item
+                    break
+
+        if selected_item is None:
+            session.send("You are not wearing that.")
+            return
+
+        selected_item.on_unequip(player)
+        del player.equipment[selected_slot]
+        session.send(
+            "You unequip the {0}.".format(
+                colour(selected_item.name, Colour.BRIGHT_GREEN)
+            )
+        )
+        player.room.broadcast(
+            "* {0} removes the {1}.".format(
+                colour(player.name, Colour.BRIGHT_CYAN),
+                colour(selected_item.name, Colour.BRIGHT_GREEN)
+            ),
+            exclude=session
+        )
+
 @register_command
 class StatsCommand(Command):
     name = "stats"
