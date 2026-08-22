@@ -24,10 +24,9 @@ Every user session is a thread because that makes it easy to follow the logic - 
 
 The goal is to scale to groups of 10-20 active users at most and again to make it fun.
 
-UI is just telnet, telnet is contrary to popular belief actually very secure if you don't need encryption - just don't reuse the same password here as you'd use for important stuff, that's asking to be hacked.
+UI is currently plain Telnet. Telnet provides no transport encryption, so passwords and gameplay traffic can be observed or altered by anyone able to intercept the connection. Do not reuse an important password here, and do not expose the current listener directly to an untrusted network while treating it as secure.
 
-SSH is harder to implement and more complicated, has greater attack surface and more scope for things for stuff like buffer overflows etc and it's just a pain. If you really must have encryption, bind to localhost and run
-an sshd with telnet as the shell on your server or something - but don't come crying if that opens up actual security problems.
+For a real deployment, bind BlingMUD to a trusted interface and place it behind a separately reviewed encrypted transport or secure front end. That deployment work is not implemented by this repository yet.
 
 ## Fun stuff
 

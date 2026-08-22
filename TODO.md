@@ -25,6 +25,8 @@ Known bugs / first fixes
 ☒ Reject Unicode terminal/bidirectional controls in structured NPC output and make detached behavior ticks inert.
 ☒ Prevent backwards wall-clock adjustments from increasing Brave Sir Knight's fire strength.
 ☒ Bound `NPCManager.stop()` so server shutdown cannot wait forever on a stuck ticker callback, and allow stop-before-start safely.
+☒ Correct unsafe README language that described unencrypted Telnet as secure.
+☒ Confine test temporary files to a repository-local, non-symlinked `.test-tmp` directory.
 ☐ Continue reviewing for obvious bugs and security issues before each new feature patch.
 
 Core engine
@@ -50,6 +52,7 @@ NPCs
   ☐ FSM with optional LLM assistance
 ☒ Re-express Brave Sir Knight's state machine through `FSMBehavior`, with a thin NPC entity and behavior-owned state/content.
 ☒ Add a comprehensive Brave Sir Knight characterization suite covering all states, chore paths, greetings, farewells, memory, timing, invalid-state recovery, empty-room behavior, random output branches, and concurrent decisions.
+☒ Add the Suspicious Alley bin-possum encounter with local FSM behavior, safe hat tribute, speech reactions, and one-per-player keepsakes.
 ☐ Make NPC memory structured and optional.
 ☐ Add fallback from LLM to FSM when the provider is unavailable.
 ☐ Make OpenRouter configuration optional: missing or incomplete keys/settings must disable remote calls without preventing startup.
@@ -58,6 +61,8 @@ NPCs
 ☐ Keep API keys out of source control, prompts, admin output, and ordinary logs.
 ☐ Add OpenRouter support behind a local adapter, with validation and a circuit breaker.
 ☐ Add token/budget gating so low-priority NPCs stay on simpler behavior.
+
+OpenRouter implementation is deferred until the user explicitly authorizes it again. Local NPC and fallback work may continue without it.
 
 Admin / ops
 

@@ -35,6 +35,26 @@ class DummyRequest(object):
 
 
 class TestRunnerRegressionTests(unittest.TestCase):
+    def test_runner_refuses_symlinked_temp_directory(self):
+        original_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+
+        try:
+            with mock.patch.object(
+                run_tests.os.path,
+                "islink",
+                return_value=True
+            ), mock.patch.object(run_tests.os, "makedirs") as makedirs:
+                result = run_tests.main()
+
+            message = sys.stderr.getvalue()
+        finally:
+            sys.stderr = original_stderr
+
+        self.assertEqual(result, 2)
+        self.assertIn("symlinked", message)
+        makedirs.assert_not_called()
+
     def test_runner_returns_child_status_and_uses_finite_timeout(self):
         completed = mock.Mock(returncode=7)
 
@@ -46,10 +66,26 @@ class TestRunnerRegressionTests(unittest.TestCase):
             result = run_tests.main()
 
         self.assertEqual(result, 7)
-        run.assert_called_once_with(
-            run_tests.TEST_COMMAND,
-            timeout=run_tests.TEST_TIMEOUT_SECONDS
+        run.assert_called_once()
+        arguments, settings = run.call_args
+        self.assertEqual(arguments, (run_tests.TEST_COMMAND,))
+        self.assertEqual(settings["cwd"], run_tests.REPOSITORY_ROOT)
+        self.assertEqual(
+            settings["timeout"],
+            run_tests.TEST_TIMEOUT_SECONDS
         )
+        self.assertEqual(
+            settings["env"]["TMPDIR"],
+            run_tests.TEST_TEMP_ROOT
+        )
+
+        for unsafe_setting in (
+            "PYTHONHOME",
+            "PYTHONINSPECT",
+            "PYTHONPATH",
+            "PYTHONSTARTUP"
+        ):
+            self.assertNotIn(unsafe_setting, settings["env"])
 
     def test_runner_reports_and_returns_timeout_status(self):
         timeout = run_tests.subprocess.TimeoutExpired(

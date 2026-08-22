@@ -31,9 +31,10 @@ First fixes
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, stronger password storage with legacy migration, NPC-manager removal cleanup, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, and regression coverage for all of them.
+- Implemented now: the first-fix engine bugs above, stronger password storage with legacy migration, NPC-manager removal cleanup, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, and regression coverage for all of them.
 - Still planned: optional structured NPC memory, the `llm_fsm` advisory wrapper and OpenRouter failover, room-aware global scheduling, gameplay-state persistence hardening, admin tooling, transport security, and the village content from the email threads.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
+- OpenRouter remains design-only and explicitly deferred; implementation requires a later, explicit user authorization.
 
 NPC architecture
 
@@ -101,6 +102,7 @@ Faithful implementation of the email content
 
 - Build the village as a cohesive zone with the Village Green as the central hub and the existing rooms connected into that map rather than replacing everything at once.
 - Keep the current starter content alive as regression/test scaffolding, but connect the new village layout into the same world so the new material can be reached naturally.
+- Implemented starter-content expansion: the Suspicious Alley now contains a hidden, local-FSM bin possum revealed through `/search bin`; it rejects unsafe or unsuitable offerings, accepts an explicitly offered pimp hat, becomes friendly, reacts to room speech, and awards each player one harmless bottle-cap keepsake through `/pet possum`. This encounter uses no network or LLM service.
 - Treat the following room-and-NPC designs as a faithful implementation target, not a rough inspiration.
 
 Val’s Hella Holler, per-location checklist
@@ -738,12 +740,13 @@ What exists vs what is still planned
   - reusable data-backed FSM states, event transitions, timers, conditions, ordered actions, and state snapshots
   - a dedicated Brave Sir Knight characterization suite preserving his patrol, greeting, chore, resource, dialogue, memory, farewell, timing, recovery, and concurrency behavior across the migration
   - Crossroads and Fabulous Chamber demo content
+  - a stateful Suspicious Alley bin-possum encounter with local commands, a two-state FSM, safe item transfer, one-per-player rewards, and no LLM dependency
   - simple item/equipment model
   - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
   - persistent character state versioning and autosave
   - empty-room suspension and room-aware scheduling
-  - OpenRouter integration and LLM failover
+  - OpenRouter integration and LLM failover, deferred until explicitly re-authorized by the user
   - budgeted NPC priority system
   - admin inspection/control commands
   - the whole email-driven village content set

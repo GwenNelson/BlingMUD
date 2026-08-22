@@ -275,6 +275,7 @@ from core import *
 
 from rooms.fabulous_chamber import FabulousChamber
 from rooms.crossroads import Crossroads
+from rooms.suspicious_alley import SuspiciousAlley
 
 from commands.core import *
 
@@ -916,14 +917,7 @@ class World(object):
 
         chamber = self.add_room(FabulousChamber())
 
-        alley = self.add_room(
-            Room(
-                "suspicious_alley",
-                "A Suspicious Alley",
-                "The alley is dark, narrow and probably needlessly "
-                "dramatic. Something rustles behind a bin."
-            )
-        )
+        alley = self.add_room(SuspiciousAlley())
 
         crossroads = self.add_room(Crossroads())
 
