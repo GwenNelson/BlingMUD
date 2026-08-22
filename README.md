@@ -38,6 +38,58 @@ Operational events are written to standard error as bounded JSON Lines. They cov
 
 The listener defaults to `0.0.0.0:4000`. Operators may set `BLINGMUD_HOST` and `BLINGMUD_PORT`; invalid values stop startup instead of silently choosing another address.
 
+### Running and stopping
+
+BlingMUD has no third-party Python dependency. From the repository directory, optionally create the session-admin password first:
+
+```sh
+python3 set_admin_pw.py
+```
+
+The script requires a matching password of 12–4096 characters and writes the ignored `admin.hash` file with owner-only permissions. If that file is absent or unreadable, gameplay still starts but `/admin` remains disabled.
+
+Start the server with Python 3.11 or newer:
+
+```sh
+BLINGMUD_HOST=127.0.0.1 BLINGMUD_PORT=4000 python3 blingmud.py
+```
+
+Choose the host deliberately. `127.0.0.1` is suitable when a separately managed local frontend controls exposure; the code default remains the accepted but public `0.0.0.0`. This repository does not provide TLS, a reverse proxy, a service unit, firewall changes, or any other host configuration.
+
+For an orderly stop, authenticate with `/admin` and use `/shutdown now [reason]`. The listener closes, queued notices receive a one-second drain opportunity, active character/world state receives its bounded final-save path, and stuck authentication workers cannot hold shutdown indefinitely. `Ctrl-C` reaches the same cleanup path. Avoid `kill -9` when state durability matters.
+
+### Persistent files and backups
+
+`users.sqlite` in the working directory contains accounts, password hashes, character JSON, and the single shared village-state row. `admin.hash` contains only the session-admin password hash. Both are ignored by Git. Character state is strict version-2 JSON; village state is strict version-1 JSON; startup applies known SQLite and character migrations and refuses an unknown newer database schema.
+
+Use `/save all` or `/shutdown now`, wait for completion, and copy `users.sqlite` while BlingMUD is stopped. A raw file copy during an active SQLite transaction is not the documented backup path. Keep `admin.hash` private, and do not hand-edit serialized JSON unless you are prepared for validation to reject it and restore safe defaults.
+
+### Administration
+
+After `/admin`, the implemented session-only commands are:
+
+- `/shutdown now [reason]` — announce, drain output, save, and stop.
+- `/kick <player> [reason]` — announce and disconnect through normal save cleanup.
+- `/heal [player] [amount|full]` — use the shared bounded health rules.
+- `/save [player|all|world]` — request a focused or nonblocking bulk save.
+- `/adminstatus [rooms|npcs]` — show bounded runtime, activity, persistence, and NPC-actor diagnostics.
+
+Admin privilege is never persisted in character state. Admin reasons are shown to affected players but operational logs record only whether a reason was supplied.
+
+### NPC and failure model
+
+Rooms with no players receive no global NPC heartbeat. Active NPCs decide through one lazy finite-mailbox actor each; one stuck callback makes only that actor inert and never creates a replacement worker. Brave Sir Knight and Val use local FSM behavior, and the possum uses a simple local state machine. There is currently no OpenRouter client, LLM call, provider key, or remote-AI dependency in the codebase: the complete game runs locally without AI configuration or network access beyond its Telnet listener.
+
+### Tests
+
+Run the complete suite only through the guarded runner:
+
+```sh
+python3 run_tests.py
+```
+
+It confines temporary files to `.test-tmp`, strips unsafe Python environment overrides, disables production log noise, and terminates the child suite after 30 seconds. Tests never bind the BlingMUD listener. Selector integration uses unnamed local socket pairs and fake clocks; environments that explicitly deny local socketpair writes report those tests as skipped, while ordinary hosts run them end to end. A timeout, failure, unexpected skip, or surviving test worker should be investigated before deployment.
+
 The goal is to scale to groups of 10-20 active users at most and again to make it fun.
 
 UI is currently plain Telnet. Telnet provides no transport encryption, so passwords and gameplay traffic can be observed or altered by anyone able to intercept the connection. Do not reuse an important password here, and do not expose the current listener directly to an untrusted network while treating it as secure.

@@ -287,6 +287,41 @@ class BoundedWorkerPoolTests(unittest.TestCase):
             release.set()
             pool.shutdown()
 
+    def test_shutdown_is_finite_and_cancels_queued_authentication(self):
+        started = threading.Event()
+        release = threading.Event()
+        callbacks = []
+        executed = []
+        pool = server_runtime.BoundedWorkerPool(1, 1)
+
+        def blocked():
+            started.set()
+            release.wait(1.0)
+            return "first"
+
+        def should_be_cancelled():
+            executed.append("second")
+            return "second"
+
+        def completed(result, error):
+            callbacks.append((result, error))
+
+        try:
+            self.assertTrue(pool.submit(blocked, completed))
+            self.assertTrue(started.wait(0.5))
+            self.assertTrue(pool.submit(should_be_cancelled, completed))
+            before = time.monotonic()
+            self.assertFalse(pool.shutdown(0.02))
+            self.assertLess(time.monotonic() - before, 0.5)
+            self.assertEqual(executed, [])
+            self.assertTrue(any(
+                result is None and isinstance(error, RuntimeError)
+                for result, error in callbacks
+            ))
+        finally:
+            release.set()
+            self.assertTrue(pool.shutdown(0.5))
+
 
 class SelectorConnectionTests(unittest.TestCase):
     def setUp(self):

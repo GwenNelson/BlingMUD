@@ -33,6 +33,8 @@ Known bugs / first fixes
 ☒ Prevent normal item creation, rewards, taking, and dropping from exceeding the persistence inventory bound or the room-item bound; preserve one-time rewards and finite shared resources when inventory is full.
 ☒ Make `/get possum` recognize the revealed NPC as non-takeable, and accept implicit item-first, `item to possum`, and `possum item` offer grammar without bypassing transfer checks.
 ☒ Prevent a kicked/closed gameplay worker from executing one command that was already queued when the session stopped.
+☒ Require the same 12–4096 character password bounds in the admin-password setter as in account creation, and make the setter import-safe for regression tests.
+☒ Replace the authentication executor's unbounded `shutdown(wait=True)` with two fixed daemon workers, queued-work cancellation, and a one-second shared join deadline so a stuck auth/database job cannot hold shutdown forever.
 ☐ Continue reviewing for obvious bugs and security issues before each new feature patch.
 
 Core engine
@@ -57,6 +59,7 @@ Core engine
   ☐ Register each future persistent item explicitly as its content patch lands; never deserialize arbitrary class names.
 ☒ Add room-aware NPC activity snapshots and make the global manager skip detached and empty-room NPCs regardless of behavior type.
 ☒ Make ticker stop prompt and restartable, while refusing replacement if a previous ticker is still alive.
+☒ Add no-listener selector integration tests for real readiness, fragmented Telnet input/output, hidden-password authentication through the bounded worker pool, graceful output drain, and fake-clock idle close; capability-skip only where the host explicitly denies local socketpair writes.
 
 NPCs
 

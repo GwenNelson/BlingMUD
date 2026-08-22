@@ -86,6 +86,7 @@ PASSWORD_HASH_MAX_ITERATIONS = 1200000
 PASSWORD_SALT_BYTES = 16
 PASSWORD_DIGEST_BYTES = 32
 MAX_PASSWORD_LENGTH = 4096
+MIN_PASSWORD_LENGTH = 12
 MAX_STORED_PASSWORD_HASH_LENGTH = 512
 MAX_INPUT_LENGTH = 4096
 MAX_USERNAME_INPUT_LENGTH = 21
@@ -1682,7 +1683,7 @@ class Session(object):
                 self.send("That password is too long.")
                 continue
 
-            if len(password) < 12:
+            if len(password) < MIN_PASSWORD_LENGTH:
                 self.send("Please use at least twelve characters.")
                 continue
 
@@ -2536,7 +2537,7 @@ class PreAuthController(object):
             self._prompt_new_password()
             return
 
-        if len(password) < 12:
+        if len(password) < MIN_PASSWORD_LENGTH:
             self.session.send("Please use at least twelve characters.")
             self._prompt_new_password()
             return

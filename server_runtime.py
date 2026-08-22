@@ -7,7 +7,6 @@ thread.
 """
 
 import collections
-import concurrent.futures
 import errno
 import math
 import queue
@@ -47,6 +46,7 @@ INPUT_LINE_LIMIT = 4097
 INPUT_QUEUE_LIMIT = 64
 AUTH_WORKERS = 2
 AUTH_QUEUE_LIMIT = 16
+AUTH_SHUTDOWN_SECONDS = 1.0
 AUTH_FAILURE_LIMIT = 5
 AUTH_FAILURE_WINDOW_SECONDS = 5.0 * 60.0
 ACCOUNT_CREATION_LIMIT = 3
@@ -153,6 +153,8 @@ class AuthRateLimiter(object):
 class BoundedWorkerPool(object):
     """Small worker pool whose pending work cannot grow without bound."""
 
+    STOP = object()
+
     def __init__(
         self,
         workers=AUTH_WORKERS,
@@ -162,15 +164,22 @@ class BoundedWorkerPool(object):
         if workers <= 0 or queued < 0:
             raise ValueError("worker and queue limits must be non-negative")
 
-        self.executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=workers,
-            thread_name_prefix="blingmud-auth"
-        )
         self.capacity = threading.BoundedSemaphore(workers + queued)
+        self.work = queue.Queue(maxsize=workers + queued)
         self.completed = queue.Queue()
         self.wake_callback = wake_callback
         self.closed = False
         self.lock = threading.RLock()
+        self.workers = []
+
+        for index in range(workers):
+            worker = threading.Thread(
+                target=self._run_worker,
+                name="blingmud-auth-{0}".format(index + 1),
+                daemon=True
+            )
+            self.workers.append(worker)
+            worker.start()
 
     def submit(self, function, callback, *arguments):
         with self.lock:
@@ -178,34 +187,51 @@ class BoundedWorkerPool(object):
                 return False
 
             try:
-                future = self.executor.submit(function, *arguments)
-            except Exception:
+                self.work.put_nowait((function, callback, arguments))
+            except queue.Full:
                 self.capacity.release()
-                raise
+                return False
 
-        future.add_done_callback(
-            lambda completed: self._completed(completed, callback)
-        )
         return True
 
-    def _completed(self, future, callback):
-        self.completed.put((future, callback))
+    def _run_worker(self):
+        while True:
+            task = self.work.get()
 
-        if self.wake_callback is not None:
-            self.wake_callback()
+            if task is self.STOP:
+                return
+
+            function, callback, arguments = task
+            result = None
+            error = None
+
+            try:
+                result = function(*arguments)
+            except Exception as caught_error:
+                error = caught_error
+
+            self.completed.put((callback, result, error))
+
+            if self.wake_callback is not None:
+                try:
+                    self.wake_callback()
+                except Exception as wake_error:
+                    log_exception(
+                        "worker.wake_error",
+                        wake_error,
+                        pool="authentication"
+                    )
 
     def drain(self):
         while True:
             try:
-                future, callback = self.completed.get_nowait()
+                callback, result, error = self.completed.get_nowait()
             except queue.Empty:
                 return
 
             self.capacity.release()
 
-            try:
-                result = future.result()
-            except Exception as error:
+            if error is not None:
                 try:
                     callback(None, error)
                 except Exception as callback_error:
@@ -226,15 +252,44 @@ class BoundedWorkerPool(object):
                         result="worker_succeeded"
                     )
 
-    def shutdown(self):
-        with self.lock:
-            if self.closed:
+    def _cancel_pending(self):
+        cancellation = RuntimeError("authentication worker pool is stopping")
+
+        while True:
+            try:
+                task = self.work.get_nowait()
+            except queue.Empty:
                 return
 
-            self.closed = True
+            if task is self.STOP:
+                self.work.put_nowait(task)
+                return
 
-        self.executor.shutdown(wait=True, cancel_futures=True)
+            unused_function, callback, unused_arguments = task
+            self.completed.put((callback, None, cancellation))
+
+    def shutdown(self, timeout=AUTH_SHUTDOWN_SECONDS):
+        with self.lock:
+            if not self.closed:
+                self.closed = True
+                self._cancel_pending()
+
+                for unused in self.workers:
+                    self.work.put_nowait(self.STOP)
+
         self.drain()
+        deadline = time.monotonic() + max(0.0, float(timeout))
+
+        for worker in self.workers:
+            remaining = deadline - time.monotonic()
+
+            if remaining <= 0:
+                break
+
+            worker.join(remaining)
+
+        self.drain()
+        return all(not worker.is_alive() for worker in self.workers)
 
 
 class ConnectionAdmission(object):
@@ -932,7 +987,11 @@ class SelectorMudServer(object):
 
         self._close_listener()
 
-        self.auth_pool.shutdown()
+        if not self.auth_pool.shutdown(AUTH_SHUTDOWN_SECONDS):
+            log_event(
+                "server.shutdown_timeout",
+                component="authentication_workers"
+            )
 
         for wake_socket in (self.wake_reader, self.wake_writer):
             try:
