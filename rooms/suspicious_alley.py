@@ -8,7 +8,12 @@ class SuspiciousAlley(Room):
     """A small, stateful encounter hidden behind the town-square bin."""
 
     BIN_TARGETS = ("bin", "the bin", "rubbish bin", "trash bin")
-    POSSUM_TARGETS = ("possum", "bin possum", "the possum")
+    POSSUM_TARGETS = (
+        "possum",
+        "bin possum",
+        "the possum",
+        "the bin possum"
+    )
 
     def __init__(self):
         Room.__init__(
@@ -94,7 +99,18 @@ class SuspiciousAlley(Room):
         item_name = arguments.strip()
         lowered = item_name.lower()
 
-        for suffix in (" to the possum", " to possum"):
+        if lowered in self.POSSUM_TARGETS:
+            return ""
+
+        for target in sorted(self.POSSUM_TARGETS, key=len, reverse=True):
+            prefix = target + " "
+
+            if lowered.startswith(prefix):
+                return item_name[len(prefix):].strip()
+
+        for target in sorted(self.POSSUM_TARGETS, key=len, reverse=True):
+            suffix = " to " + target
+
             if lowered.endswith(suffix):
                 item_name = item_name[:-len(suffix)].strip()
                 break

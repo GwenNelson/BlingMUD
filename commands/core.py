@@ -219,11 +219,9 @@ class TakeCommand(Command):
             session.send("Take what?")
             return
 
-        if player.inventory_is_full():
-            session.send("You cannot carry anything else.")
-            return
-
         item = None
+        matching_npc = None
+        inventory_full = False
 
         with player.room.lock:
             for candidate in player.room.items:
@@ -232,10 +230,37 @@ class TakeCommand(Command):
                     break
 
             if item is not None:
-                player.room.items.remove(item)
+                inventory_full = player.inventory_is_full()
+
+                if not inventory_full:
+                    player.room.items.remove(item)
+            else:
+                for candidate in player.room.npcs:
+                    names = (candidate.name,) + tuple(
+                        getattr(candidate, "aliases", ())
+                    )
+
+                    if (
+                        "hidden" not in candidate.flags
+                        and wanted in [name.lower() for name in names]
+                    ):
+                        matching_npc = candidate
+                        break
 
         if item is None:
+            if matching_npc is not None:
+                session.send(
+                    "You cannot pick up {0}; {0} is not an item.".format(
+                        matching_npc.name
+                    )
+                )
+                return
+
             session.send("There is no {0} here.".format(arguments))
+            return
+
+        if inventory_full:
+            session.send("You cannot carry anything else.")
             return
 
         player.inventory.append(item)

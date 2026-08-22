@@ -125,6 +125,51 @@ class SuspiciousAlleyTests(unittest.TestCase):
         )
         self.assertIn("pimp hat", self.room.possum.look(self.player))
 
+    def test_target_first_offer_grammar_befriends_possum(self):
+        self.reveal_possum()
+        hat = PimpHat()
+        self.player.inventory.append(hat)
+
+        self.room.on_command(
+            self.session,
+            "offer",
+            "possum pimp hat"
+        )
+
+        self.assertNotIn(hat, self.player.inventory)
+        self.assertIn(hat, self.room.possum.inventory)
+        self.assertEqual(
+            self.room.possum.behavior.current_state,
+            BinPossumBehavior.STATE_FRIENDLY
+        )
+
+    def test_offer_parser_accepts_implicit_item_first_and_both_orders(self):
+        cases = {
+            "pimp hat": "pimp hat",
+            "pimp hat to possum": "pimp hat",
+            "pimp hat to the possum": "pimp hat",
+            "possum pimp hat": "pimp hat",
+            "bin possum pimp hat": "pimp hat",
+            "the possum pimp hat": "pimp hat",
+            "the bin possum pimp hat": "pimp hat",
+            "possum": ""
+        }
+
+        for arguments, expected in cases.items():
+            self.assertEqual(
+                self.room._offered_item_name(arguments),
+                expected
+            )
+
+    def test_get_possum_recognizes_visible_npc_as_not_takeable(self):
+        self.reveal_possum()
+        self.session.messages = []
+
+        blingmud.COMMANDS["get"].execute(self.session, "possum")
+
+        self.assertIn("cannot pick up bin possum", self.session.messages[-1])
+        self.assertNotIn("There is no", self.session.messages[-1])
+
     def test_friendly_possum_declines_additional_items_without_taking_them(self):
         self.make_possum_friendly()
         spare_hat = PimpHat()

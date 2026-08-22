@@ -126,7 +126,7 @@ Faithful implementation of the email content
 
 - Build the village as a cohesive zone with the Village Green as the central hub and the existing rooms connected into that map rather than replacing everything at once.
 - Keep the current starter content alive as regression/test scaffolding, but connect the new village layout into the same world so the new material can be reached naturally.
-- Implemented starter-content expansion: the Suspicious Alley now contains a hidden, local-FSM bin possum revealed through `/search bin`; it rejects unsafe or unsuitable offerings, accepts an explicitly offered pimp hat, becomes friendly, reacts to room speech, and awards each player one harmless bottle-cap keepsake through `/pet possum`. This encounter uses no network or LLM service.
+- Implemented starter-content expansion: the Suspicious Alley now contains a hidden, local-FSM bin possum revealed through `/search bin`; it rejects unsafe or unsuitable offerings, accepts a pimp hat through implicit item-first, `item to possum`, or `possum item` grammar, becomes friendly, reacts to room speech, and awards each player one harmless bottle-cap keepsake through `/pet possum`. Generic `/take` and `/get` recognize its visible aliases and accurately report that an NPC is not an item. This encounter uses no network or LLM service.
 - Treat the following room-and-NPC designs as a faithful implementation target, not a rough inspiration.
 
 Val’s Hella Holler, per-location checklist
@@ -781,7 +781,7 @@ What exists vs what is still planned
   - reusable data-backed FSM states, event transitions, timers, conditions, ordered actions, and state snapshots
   - a dedicated Brave Sir Knight characterization suite preserving his patrol, greeting, chore, resource, dialogue, memory, farewell, timing, recovery, and concurrency behavior across the migration
   - Crossroads and Fabulous Chamber demo content
-  - a stateful Suspicious Alley bin-possum encounter with local commands, a two-state FSM, safe item transfer, one-per-player rewards, and no LLM dependency
+  - a stateful Suspicious Alley bin-possum encounter with local commands, a two-state FSM, both natural offer orders, accurate non-takeable NPC feedback, safe item transfer, one-per-player rewards, and no LLM dependency
   - an initial Village Green and Hanging Tree canopy with shared bounded runtime state, day/night Wisp lighting, harvestable persistent giant acorns, room-aware falling-acorn hazards, and a non-verbal protectable Wisp Mother whose loss darkens the Green
   - an initial Val's Hella Holler north of the Green, with faithful tavern scenery, a complete local-FSM Val, fixed multi-action horn service, jokes/lore/attention/cat-defense interactions, and a first cross-room reaction to Wisp Mother harm
   - bounded health and intoxication mechanics plus three concrete persistent Val drink templates, with healing/alcohol effects and a global `/drink` command

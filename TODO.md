@@ -31,6 +31,7 @@ Known bugs / first fixes
 ☒ Reject oversized stored password hashes and excessive PBKDF iteration counts before expensive work.
 ☒ Make room enter/leave idempotent and clear stale `player.room` references on successful departure.
 ☒ Prevent normal item creation, rewards, taking, and dropping from exceeding the persistence inventory bound or the room-item bound; preserve one-time rewards and finite shared resources when inventory is full.
+☒ Make `/get possum` recognize the revealed NPC as non-takeable, and accept implicit item-first, `item to possum`, and `possum item` offer grammar without bypassing transfer checks.
 ☐ Continue reviewing for obvious bugs and security issues before each new feature patch.
 
 Core engine
@@ -68,7 +69,7 @@ NPCs
   ☐ FSM with optional LLM assistance
 ☒ Re-express Brave Sir Knight's state machine through `FSMBehavior`, with a thin NPC entity and behavior-owned state/content.
 ☒ Add a comprehensive Brave Sir Knight characterization suite covering all states, chore paths, greetings, farewells, memory, timing, invalid-state recovery, empty-room behavior, random output branches, and concurrent decisions.
-☒ Add the Suspicious Alley bin-possum encounter with local FSM behavior, safe hat tribute, speech reactions, and one-per-player keepsakes.
+☒ Add the Suspicious Alley bin-possum encounter with local FSM behavior, safe hat tribute in both natural command orders, accurate `/get` feedback, speech reactions, and one-per-player keepsakes.
 ☐ Make NPC memory structured and optional.
 ☐ Add fallback from LLM to FSM when the provider is unavailable.
 ☐ Make OpenRouter configuration optional: missing or incomplete keys/settings must disable remote calls without preventing startup.

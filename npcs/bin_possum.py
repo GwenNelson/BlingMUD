@@ -81,6 +81,8 @@ class BinPossumBehavior(FSMBehavior):
 
 
 class BinPossum(NPC):
+    aliases = ("possum", "the possum", "the bin possum")
+
     def __init__(self):
         NPC.__init__(
             self,
