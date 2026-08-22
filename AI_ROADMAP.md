@@ -7,6 +7,8 @@ Agent instructions
 - Never assume something is implemented until it has been verified in the codebase.
 - Always fix any known bugs first unless explicitly told not to.
 - Always review for potential bugs, including security issues, before moving on to new work.
+- After any implementation commit, update this roadmap and `TODO.md` so they still match reality.
+- If you finish a significant item, mark what is now implemented versus what remains planned; do not leave the roadmap stale.
 
 Summary
 
@@ -16,9 +18,15 @@ Summary
 
 First fixes
 
-- Fix the command dispatcher bug in [blingmud.py:695](</home/gwen/codex-stuff/BlingMUD/blingmud.py#L695>) where `Session.handle_command` uses `session` instead of `self`; right now that is a latent crash path for any admin-gated command and it should be the first code fix.
-- Fix the wearable-slot bug in [core.py:55](</home/gwen/codex-stuff/BlingMUD/core.py#L55>) where `Item.__init__` ignores the `worn_where` argument and forces every wearable into `Head`; that breaks any non-head gear and will matter immediately once more item types exist.
-- Add regression tests for both issues before doing broader refactors so the same mistakes do not slip back in.
+- [done] Fix the command dispatcher bug in [blingmud.py:695](</home/gwen/codex-stuff/BlingMUD/blingmud.py#L695>) where `Session.handle_command` uses `session` instead of `self`; this is now corrected in the current codebase.
+- [done] Fix the wearable-slot bug in [core.py:55](</home/gwen/codex-stuff/BlingMUD/core.py#L55>) where `Item.__init__` ignored the `worn_where` argument and forced every wearable into `Head`; this is now corrected in the current codebase.
+- [done] Add regression tests for both issues before doing broader refactors so the same mistakes do not slip back in.
+
+What exists vs what is still planned
+
+- Implemented now: the two first-fix engine bugs above and their regression coverage.
+- Still planned: the NPC abstraction, OpenRouter failover, room-aware scheduling, persistence hardening, admin tooling, and the village content from the email threads.
+- Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 
 NPC architecture
 

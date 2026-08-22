@@ -9,6 +9,8 @@ Follow these rules when working here:
 - Always fix known bugs first unless explicitly told not to.
 - Always review for potential bugs, including security issues, before starting new feature work.
 - Do not patch blindly from assumptions.
+- After any implementation or bugfix commit, update `AI_ROADMAP.md` and `TODO.md` before moving on.
+- Do not leave the roadmap or TODO stale; future agents rely on them to know what is actually done.
 - Prefer small, reviewable changes over large rewrites.
 - Keep content work, engine work, and AI architecture work separate where possible.
 - Preserve unrelated user changes unless the user asks otherwise.
@@ -29,6 +31,7 @@ Workflow expectations:
 - For feature work, check `AI_ROADMAP.md` first so the implementation matches the intended architecture.
 - For AI, NPC, persistence, and room-scheduling changes, review the roadmap before making code changes.
 - For any new significant subsystem, document the decision in `AI_ROADMAP.md` and keep `TODO.md` aligned at a higher level.
+- When a change lands, reconcile all three docs: `AI_ROADMAP.md`, `TODO.md`, and this file.
 
 Project-specific guidance:
 
@@ -36,4 +39,3 @@ Project-specific guidance:
 - Treat Brave Sir Knight as the baseline example for NPC behavior design.
 - Keep the codebase compatible with the current threaded telnet architecture unless the roadmap says otherwise.
 - If a change affects persistence, NPC brains, room triggers, or AI fallback, be careful to preserve save/load and failure-mode behavior.
-

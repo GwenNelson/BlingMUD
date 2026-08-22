@@ -10,12 +10,13 @@ Priority rules for human patches:
 - Prefer small, reviewable changes.
 - Keep content and engine changes separate where possible.
 - If a feature touches NPC brains, persistence, or AI, check the roadmap first.
+- After any meaningful implementation, update `AI_ROADMAP.md` and this file so the two documents stay aligned.
 
 Known bugs / first fixes
 
-☐ Fix the command dispatcher bug in `Session.handle_command` where `session` is referenced instead of `self`.
-☐ Fix the wearable-slot bug in `Item.__init__` where `worn_where` is ignored and all wearable items become `Head`.
-☐ Add regression tests for both issues.
+☒ Fix the command dispatcher bug in `Session.handle_command` where `session` is referenced instead of `self`.
+☒ Fix the wearable-slot bug in `Item.__init__` where `worn_where` is ignored and all wearable items become `Head`.
+☒ Add regression tests for both issues.
 ☐ Review for any other obvious bugs or security issues before starting new feature work.
 
 Core engine
@@ -76,6 +77,6 @@ Future
 Notes for human contributors
 
 - Before patching a system described in AI_ROADMAP.md, check the roadmap so the patch matches the intended architecture.
-- If you finish a significant feature here, update AI_ROADMAP.md afterwards so the agent roadmap stays current.
+- If you finish a significant feature here, update AI_ROADMAP.md afterwards so the agent roadmap stays current, and update this file so it still reflects reality.
 - If you discover a new bug, move it near the top of this file and fix it before moving on.
 - Prefer leaving design-heavy work to the roadmap and keeping this file focused on patchable, reviewable tasks.
