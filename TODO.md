@@ -40,7 +40,7 @@ Core engine
 ☒ Save supported player state on logout before removing the player from their final room, while preserving the previous snapshot if serialization fails.
 ☐ Add periodic autosave without adding an unbounded or uninterruptible background process.
 ☐ Add persistent IDs and templates for rooms, items, and world objects where needed.
-  ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat and royal possum bottle cap.
+  ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat, royal possum bottle cap, and giant acorn.
   ☐ Register each future persistent item explicitly as its content patch lands; never deserialize arbitrary class names.
 ☒ Add room-aware NPC activity snapshots and make the global manager skip detached and empty-room NPCs regardless of behavior type.
 ☒ Make ticker stop prompt and restartable, while refusing replacement if a previous ticker is still alive.
@@ -91,12 +91,14 @@ Village content
 ☐ Add Val's Hella Holler as the tavern hub.
 ☐ Add Val as the barkeep NPC with jokes, drink service, teleport-style attention, and cat defense.
 ☐ Add the magical horn / drink creation system with explicit item effects.
-☐ Add the Village Green, the Hanging Tree canopy, acorn harvesting, Wisps, and the low-acorn falling-acorn hazard.
+☒ Add the initial Village Green and Hanging Tree canopy with `/up`/`/down`, day/night Wisp descriptions, both acorn harvest verbs, bounded giant-acorn supply, and a room-aware low-harvest bonking hazard.
+☐ Make canopy supply renewable and persist shared village ecology across restarts without enabling unbounded item creation.
 ☐ Add Master Corbel, Acorn Goblets, and Acorn Mash.
 ☐ Add the Smithereens, Eisele, and Tackdriver.
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects.
 ☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec.
-☐ Add the Wisp Mother and village consequences for attacking her.
+☒ Add the non-verbal Wisp Mother with examine, one-hit protection, removal, prolonged darkness, recovery, and shared harm state.
+☐ Make Val and the remaining villagers react to Wisp Mother harm through that shared state.
 
 Future
 

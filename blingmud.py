@@ -349,6 +349,9 @@ from core import *
 from rooms.fabulous_chamber import FabulousChamber
 from rooms.crossroads import Crossroads
 from rooms.suspicious_alley import SuspiciousAlley
+from rooms.hanging_tree import HangingTreeCanopy
+from rooms.village_green import VillageGreen
+from village_state import VillageState
 
 from commands.core import *
 
@@ -1046,6 +1049,7 @@ class World(object):
     def __init__(self):
         self.rooms = {}
         self.starting_room = None
+        self.village_state = VillageState()
         self.build()
 
     def add_room(self, room):
@@ -1070,6 +1074,9 @@ class World(object):
 
         crossroads = self.add_room(Crossroads())
 
+        green = self.add_room(VillageGreen(self.village_state))
+        canopy = self.add_room(HangingTreeCanopy(self.village_state))
+
         square.add_exit("north", chamber)
         chamber.add_exit("south", square)
 
@@ -1078,6 +1085,12 @@ class World(object):
 
         square.add_exit("south",crossroads)
         crossroads.add_exit("north",square)
+
+        square.add_exit("west", green)
+        green.add_exit("east", square)
+
+        green.add_exit("up", canopy)
+        canopy.add_exit("down", green)
 
         self.starting_room = square
 

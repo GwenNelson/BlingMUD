@@ -244,7 +244,7 @@ class Room(object):
         player.session.send("")
         player.session.send(colour(self.name,Colour.TITLE))
 #        player.session.send("-" * len(self.name))
-        player.session.send(self.description)
+        player.session.send(self.description_for(player))
 
         with self.lock:
             other_players = [
@@ -254,7 +254,11 @@ class Room(object):
             ]
             item_names = [colour(item.name, Colour.BRIGHT_GREEN) for item in self.items]
 
-            npc_names = [colour(npc.name, Colour.BRIGHT_CYAN) for npc in self.npcs]
+            npc_names = [
+                colour(npc.name, Colour.BRIGHT_CYAN)
+                for npc in self.npcs
+                if "hidden" not in npc.flags
+            ]
 
         if npc_names:
            player.session.send("People here: {0}".format(", ".join(other_players + npc_names)) ) 
@@ -272,6 +276,9 @@ class Room(object):
                 player.session.send("\t %s" % colour(e,Colour.BRIGHT_WHITE))
         else:
             player.session.send("There are no obvious exits.")
+
+    def description_for(self, player):
+        return self.description
 
     def on_command(self, session, command, arguments):
         """Allow an individual room to handle custom commands.

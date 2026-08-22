@@ -31,8 +31,8 @@ First fixes
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with whitelisted item templates and logout save/load, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, and regression coverage for all of them.
-- Still planned: persistence autosave and future schema migrations beyond the legacy-empty-to-v1 path, optional structured NPC memory, bounded isolation for a trusted callback that never returns, the `llm_fsm` advisory wrapper and OpenRouter failover, popularity/priority budgeting, admin tooling, transport security, and the village content from the email threads.
+- Implemented now: the first-fix engine bugs above, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with whitelisted item templates and logout save/load, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, the first Village Green/Hanging Tree/Wisp Mother slice, and regression coverage for all of them.
+- Still planned: persistence autosave and future schema migrations beyond the legacy-empty-to-v1 path, optional structured NPC memory, bounded isolation for a trusted callback that never returns, the `llm_fsm` advisory wrapper and OpenRouter failover, popularity/priority budgeting, admin tooling, transport security, Corbel and the village economy, durable world-state persistence, and the remaining village content from the email threads.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 - OpenRouter remains design-only and explicitly deferred; implementation requires a later, explicit user authorization.
 
@@ -92,7 +92,7 @@ Persistence and character state
 - Keep auth data and gameplay state separate in the design, even if they initially live in the same SQLite database.
 - Password storage now uses salted PBKDF2-SHA256 and upgrades legacy SHA-256 hashes after a successful login; this is implemented, but Telnet transport remains unencrypted and must not be treated as secure authentication over an untrusted network.
 - [done: minimum layer] `player_state.py` owns version-1 JSON serialization and restoration for the state the game actually has today: room ID, fabulousness, inventory, and equipment. Empty legacy `{}` state migrates to safe version-1 defaults when loaded.
-- [done: minimum layer] Current item restoration is an explicit `pimp_hat` / `royal_possum_bottle_cap` template whitelist with bounded payload, inventory, equipment, stat, password, and input sizes. Unknown templates and inconsistent equipment fail closed; no save data controls imports or class names.
+- [done: minimum layer] Current item restoration is an explicit `pimp_hat` / `royal_possum_bottle_cap` / `giant_acorn` template whitelist with bounded payload, inventory, equipment, stat, password, and input sizes. Unknown templates and inconsistent equipment fail closed; no save data controls imports or class names.
 - [done: minimum layer] Successful logins restore the last known room, with removed/unknown rooms falling back to the starting room. Disconnect saves before room removal, and a failed or lossy save leaves the previous database state intact while cleanup continues.
 - [security invariant] Admin privilege remains session-only and is deliberately absent from character JSON; never turn a gameplay save into an authentication or authorization source.
 - Still required here: periodic autosave, explicit migrations when version 2 is introduced, more item templates as real content lands, and eventual structured status/quest/relationship fields when those systems actually exist.
@@ -170,6 +170,8 @@ Village Green, per-location checklist
 - Failure / consequence:
   - if the acorn economy is neglected, idle players in the Green get lightly punished by the environment
   - the hazard should be funny, not oppressive
+- [done: initial slice] The Green is connected west of the existing Town Square and up to a separate canopy room. It has injected/testable day/night descriptions, visible night Wisps, a hidden room-aware falling-acorn heartbeat, and a shared danger counter reduced by canopy harvests.
+- [current bound] The initial canopy has twelve runtime acorns and allows one giant acorn to be carried at a time, preventing unbounded item creation. Renewable supply and the full Corbel economy remain planned.
 
 Master Corbel / Turner shop, per-location checklist
 
@@ -228,6 +230,8 @@ Wisp Mother, per-location checklist
   - the zone should react socially to harm against her
 - Failure / consequence:
   - attacking the Wisp Mother should have obvious village consequences, not merely personal combat consequences
+- [done: initial slice] The non-verbal Mother can be looked at or examined for a warm pulse, protected with a one-hit Wisp ward, removed by violence, and restored after a thirty-minute runtime darkness period. Her loss immediately darkens the Green, broadcasts village horror, and increments shared harm state for later NPC reactions.
+- [remaining consequence] Val and later villagers still need to consume the shared harm count in their own reactions, and the runtime darkness/acorn ecology still needs durable world-state persistence before it can survive restart.
 
 The Smithereens, per-location checklist
 
@@ -453,6 +457,7 @@ Test plan
 - Run the suite through `python3 run_tests.py`, retain its finite subprocess watchdog, and require every test-level barrier, condition wait, and thread join to have its own finite timeout.
 - Verify that an empty room causes no NPC ticks and no OpenRouter calls.
 - The local scheduler tests now prove that custom behaviors, not just built-in random/FSM behaviors, receive no heartbeat while detached or in empty rooms; they also cover room activity accounting, stale-event rejection, idempotent lifecycle events, cleared room references, prompt stop, clean restart, and refusal to replace a still-live ticker.
+- The initial Green tests cover world wiring, `/up` and `/down`, day/night descriptions, hidden hazard actors, bounded `harvest acorn` and `gather acorn`, visible danger reduction, funny bonks only while danger remains, giant-acorn persistence, and Wisp Mother examine/protect/harm/darkness/recovery behavior.
 - Verify that a populated room wakes NPCs correctly and that LLM calls are only made for eligible NPCs.
 - Verify failover from LLM to FSM on timeout, invalid JSON, or OpenRouter errors, and verify restoration after a healthy probe.
 - Verify priority ordering by simulating multiple active NPCs with different complexity and popularity scores.
@@ -752,6 +757,7 @@ What exists vs what is still planned
   - a dedicated Brave Sir Knight characterization suite preserving his patrol, greeting, chore, resource, dialogue, memory, farewell, timing, recovery, and concurrency behavior across the migration
   - Crossroads and Fabulous Chamber demo content
   - a stateful Suspicious Alley bin-possum encounter with local commands, a two-state FSM, safe item transfer, one-per-player rewards, and no LLM dependency
+  - an initial Village Green and Hanging Tree canopy with shared bounded runtime state, day/night Wisp lighting, harvestable persistent giant acorns, room-aware falling-acorn hazards, and a non-verbal protectable Wisp Mother whose loss darkens the Green
   - simple item/equipment model
   - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
@@ -760,7 +766,7 @@ What exists vs what is still planned
   - OpenRouter integration and LLM failover, deferred until explicitly re-authorized by the user
   - budgeted NPC priority system
   - admin inspection/control commands
-  - the whole email-driven village content set
+  - the remaining email-driven village content, including Corbel's acorn economy and durable shared world state
   - structured room/NPC event schemas
   - content data loading / world authoring layer
   - encrypted client transport or a secure front end for authentication outside trusted networks
@@ -820,12 +826,12 @@ Milestone 5: add admin and persistence tooling
 Milestone 6: implement the email content faithfully
 
 - Build Val’s Hella Holler and Val.
-- Build the Village Green and Hanging Tree.
+- [done: initial slice] Build the Village Green and Hanging Tree with traversal, bounded harvest mechanics, danger reduction, and persistent giant-acorn items.
 - Build the smithy and Eisele.
 - Build Tackdriver.
 - Build Ceridwen’s cottage and the herb garden.
 - Build the Temple of the Self.
-- Build the Wisp Mother and the acorn hazard loop.
+- [done: initial slice] Build the Wisp Mother and local acorn hazard loop; village-wide NPC reactions and durable world-state persistence remain.
 - Add the drink, scrap, respec, confusion, and mirror systems that make the content mechanically real.
 
 Room-by-room content expansion

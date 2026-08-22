@@ -17,6 +17,7 @@ class HelpCommand(Command):
         session.send("/look")
         session.send("/look <object or person>")
         session.send("/north, /south, /east, /west")
+        session.send("/up, /down")
         session.send("/go <direction>")
         session.send("/me <action>")
         session.send("/who")
@@ -114,6 +115,20 @@ class WestCommand(DirectionCommand):
     name = "west"
     aliases = ("w",)
     direction = "west"
+
+
+@register_command
+class UpCommand(DirectionCommand):
+    name = "up"
+    aliases = ("u",)
+    direction = "up"
+
+
+@register_command
+class DownCommand(DirectionCommand):
+    name = "down"
+    aliases = ("d",)
+    direction = "down"
 
 
 @register_command
@@ -276,4 +291,3 @@ class QuitCommand(Command):
     def execute(self, session, arguments):
         session.send("Goodbye!")
         session.running = False
-

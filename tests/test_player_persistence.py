@@ -7,6 +7,7 @@ import unittest
 
 import blingmud
 from core import Item, Player, Room
+from items.giant_acorn import GiantAcorn
 from items.pimp_hat import PimpHat
 from items.possum_token import RoyalPossumBottleCap
 from player_state import (
@@ -61,7 +62,8 @@ class PlayerStateUnitTests(unittest.TestCase):
         player.room = self.world.other_room
         hat = PimpHat()
         token = RoyalPossumBottleCap()
-        player.inventory = [hat, token]
+        acorn = GiantAcorn()
+        player.inventory = [hat, token, acorn]
         player.equipment[hat.worn_where] = hat
         player.fabulousness = 37
         player.is_admin = True
@@ -72,12 +74,13 @@ class PlayerStateUnitTests(unittest.TestCase):
 
         self.assertIs(room, self.world.other_room)
         self.assertEqual(restored.fabulousness, 37)
-        self.assertEqual(len(restored.inventory), 2)
+        self.assertEqual(len(restored.inventory), 3)
         self.assertIsInstance(restored.inventory[0], PimpHat)
         self.assertIsInstance(
             restored.inventory[1],
             RoyalPossumBottleCap
         )
+        self.assertIsInstance(restored.inventory[2], GiantAcorn)
         self.assertIs(restored.equipment["Head"], restored.inventory[0])
         self.assertFalse(restored.is_admin)
 

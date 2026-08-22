@@ -2,6 +2,7 @@ import json
 
 from items.pimp_hat import PimpHat
 from items.possum_token import RoyalPossumBottleCap
+from items.giant_acorn import GiantAcorn
 
 
 PLAYER_STATE_VERSION = 1
@@ -13,12 +14,14 @@ MAX_FABULOUSNESS = 10000
 
 ITEM_FACTORIES = {
     "pimp_hat": PimpHat,
-    "royal_possum_bottle_cap": RoyalPossumBottleCap
+    "royal_possum_bottle_cap": RoyalPossumBottleCap,
+    "giant_acorn": GiantAcorn
 }
 
 ITEM_TEMPLATE_IDS = {
     PimpHat: "pimp_hat",
-    RoyalPossumBottleCap: "royal_possum_bottle_cap"
+    RoyalPossumBottleCap: "royal_possum_bottle_cap",
+    GiantAcorn: "giant_acorn"
 }
 
 
