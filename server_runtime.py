@@ -328,6 +328,14 @@ class SelectorConnection(object):
             self.input_limit = maximum_length
             self.input_parser.set_maximum_length(maximum_length)
 
+    def replace_current_input(self, expected_text, replacement):
+        """Atomically replace only the input that produced a Tab event."""
+        with self.input_lock:
+            if self.input_parser.current_text != expected_text:
+                return None
+
+            return self.input_parser.replace_current_text(replacement)
+
     def sendall(self, data):
         if not isinstance(data, (bytes, bytearray)):
             raise TypeError("network output must be bytes")

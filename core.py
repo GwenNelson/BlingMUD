@@ -88,6 +88,8 @@ class Room(object):
     Rooms are code, so subclasses may add arbitrary state and behaviour.
     """
 
+    command_specs = ()
+
     def __init__(self, room_id, name, description, time_source=None):
         self.room_id = room_id
         self.name = name
@@ -395,11 +397,70 @@ class Player(Entity):
 
         return "\r\n".join(lines)
 
+class CommandSpec(object):
+    """Validated user-facing metadata for one command and its aliases."""
+
+    def __init__(
+        self,
+        name,
+        usage,
+        summary,
+        aliases=(),
+        admin_only=False
+    ):
+        values = (name,) + tuple(aliases)
+
+        for value in values:
+            if (
+                not isinstance(value, str)
+                or not value
+                or value != value.lower()
+                or value.startswith("/")
+                or any(character.isspace() for character in value)
+            ):
+                raise ValueError("command names must be lowercase words")
+
+        if len(set(values)) != len(values):
+            raise ValueError("command aliases must be unique")
+
+        if not isinstance(usage, str) or not usage.startswith("/"):
+            raise ValueError("command usage must begin with a slash")
+
+        if not isinstance(summary, str) or not summary.strip():
+            raise ValueError("command summary cannot be empty")
+
+        self.name = name
+        self.usage = usage
+        self.summary = summary.strip()
+        self.aliases = tuple(aliases)
+        self.admin_only = bool(admin_only)
+
+    @property
+    def names(self):
+        return (self.name,) + self.aliases
+
+
 class Command(object):
     name = None
     aliases = ()
-    
+    usage = None
+    summary = None
     admin_only = False
+
+    def command_spec(self):
+        if self.summary is None:
+            raise ValueError(
+                "registered commands must declare a summary"
+            )
+
+        usage = self.usage or "/{0}".format(self.name)
+        return CommandSpec(
+            self.name,
+            usage,
+            self.summary,
+            aliases=self.aliases,
+            admin_only=self.admin_only
+        )
 
     def execute(self, session, arguments):
         raise NotImplementedError()
@@ -410,6 +471,7 @@ COMMANDS = {}
 
 def register_command(command_class):
     command = command_class()
+    command.command_spec()
     names = [command.name]
     names.extend(command.aliases)
 
@@ -417,6 +479,97 @@ def register_command(command_class):
         COMMANDS[name.lower()] = command
 
     return command_class
+
+
+def command_specs_for_session(session, include_room=True):
+    """Return visible global specs, then current-room specs."""
+    specs = []
+    seen_commands = set()
+
+    for command in COMMANDS.values():
+        identity = id(command)
+
+        if identity in seen_commands:
+            continue
+
+        seen_commands.add(identity)
+        spec = command.command_spec()
+
+        if spec.admin_only and not session.player.is_admin:
+            continue
+
+        specs.append(spec)
+
+    specs.sort(key=lambda spec: spec.name)
+
+    if not include_room or session.player.room is None:
+        return specs
+
+    room_specs = list(session.player.room.command_specs)
+
+    for spec in room_specs:
+        if not isinstance(spec, CommandSpec):
+            raise TypeError("room command_specs must contain CommandSpec")
+
+        if spec.admin_only and not session.player.is_admin:
+            continue
+
+        specs.append(spec)
+
+    return specs
+
+
+def find_command_spec(session, name):
+    wanted = name.strip().lower().lstrip("/")
+
+    for spec in command_specs_for_session(session):
+        if wanted in spec.names:
+            return spec
+
+    return None
+
+
+def complete_command_text(session, current_text):
+    """Return (replacement, canonical candidates) for a command token."""
+    if not isinstance(current_text, str) or not current_text.startswith("/"):
+        return None, ()
+
+    command_text = current_text[1:]
+
+    if any(character.isspace() for character in command_text):
+        return None, ()
+
+    prefix = command_text.lower()
+    exact = None
+    candidates = {}
+
+    for spec in command_specs_for_session(session):
+        for name in spec.names:
+            if name == prefix and exact is None:
+                exact = spec
+
+            if name.startswith(prefix):
+                candidates[spec.name] = spec
+
+    if exact is not None:
+        return "/{0} ".format(exact.name), (exact.name,)
+
+    names = tuple(sorted(candidates))
+
+    if len(names) == 1:
+        return "/{0} ".format(names[0]), names
+
+    if len(names) > 1:
+        common = names[0]
+
+        for name in names[1:]:
+            while common and not name.startswith(common):
+                common = common[:-1]
+
+        if len(common) > len(prefix):
+            return "/{0}".format(common), names
+
+    return None, names
 
 
 class NPCAction(object):

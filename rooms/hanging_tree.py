@@ -1,8 +1,17 @@
-from core import PLAYER_INVENTORY_LIMIT, Room
+from core import CommandSpec, PLAYER_INVENTORY_LIMIT, Room
 from items.giant_acorn import GiantAcorn
 
 
 class HangingTreeCanopy(Room):
+    command_specs = (
+        CommandSpec(
+            "harvest",
+            "/harvest acorn",
+            "Gather one giant acorn from the reachable branches.",
+            aliases=("gather",)
+        ),
+    )
+
     ACORN_TARGETS = ("acorn", "acorns", "giant acorn", "giant acorns")
 
     def __init__(self, village_state):

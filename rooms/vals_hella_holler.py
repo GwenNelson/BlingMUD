@@ -1,11 +1,51 @@
 import random
 
-from core import NPCAction, PLAYER_INVENTORY_LIMIT, Room
+from core import CommandSpec, NPCAction, PLAYER_INVENTORY_LIMIT, Room
 from items.drinks import HornBornSpecial, ValHealingPotion, ValkyrieMead
 from npcs.val import Val
 
 
 class ValsHellaHoller(Room):
+    command_specs = (
+        CommandSpec(
+            "order",
+            "/order <drink concept>",
+            "Ask Val's magical horn for a bounded fantasy drink."
+        ),
+        CommandSpec(
+            "joke",
+            "/joke [val]",
+            "Ask Val for a tavern joke."
+        ),
+        CommandSpec(
+            "talk",
+            "/talk val",
+            "Ask Val about herself and Asgard."
+        ),
+        CommandSpec(
+            "flirt",
+            "/flirt val",
+            "Try your luck with Val and her cats."
+        ),
+        CommandSpec(
+            "call",
+            "/call val",
+            "Summon Val's questionably duplicated attention."
+        ),
+        CommandSpec(
+            "examine",
+            "/examine <horn, cats or bar>",
+            "Inspect one of the tavern's notable features.",
+            aliases=("inspect",)
+        ),
+        CommandSpec(
+            "attack",
+            "/attack val",
+            "Discover the tavern cats' enforcement policy.",
+            aliases=("hit",)
+        )
+    )
+
     VAL_TARGETS = ("val", "the valkyrie", "valkyrie")
     HORN_TARGETS = ("horn", "magical horn", "cow horn", "the horn")
     CAT_TARGETS = ("cat", "cats", "tavern cats", "the cats")

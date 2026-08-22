@@ -8,34 +8,50 @@ from items.drinks import Drink
 class HelpCommand(Command):
     name = "help"
     aliases = ("commands",)
+    usage = "/help [command]"
+    summary = "List available commands or explain one command."
 
     def execute(self, session, arguments):
+        wanted = arguments.strip()
+
+        if wanted:
+            spec = find_command_spec(session, wanted)
+
+            if spec is None:
+                session.send(
+                    "No help is available for /{0}.".format(
+                        wanted.lstrip("/")
+                    )
+                )
+                return
+
+            session.send("")
+            session.send(spec.usage)
+            session.send(spec.summary)
+
+            if spec.aliases:
+                session.send(
+                    "Aliases: {0}".format(
+                        ", ".join("/" + alias for alias in spec.aliases)
+                    )
+                )
+            return
+
         session.send("")
-        session.send("BLINGMUD commands")
-        session.send("-----------------")
+        session.send("BLINGMUD commands available here")
+        session.send("-------------------------------")
         session.send("Anything without a slash is spoken aloud.")
         session.send("")
-        session.send("/look")
-        session.send("/look <object or person>")
-        session.send("/north, /south, /east, /west")
-        session.send("/up, /down")
-        session.send("/go <direction>")
-        session.send("/me <action>")
-        session.send("/who")
-        session.send("/inventory")
-        session.send("/drink <drink>")
-        session.send("/take <object>")
-        session.send("/drop <object>")
-        session.send("/equip <object>")
-        session.send("/stats")
-        session.send("/worship <person>")
-        session.send("/bling")
-        session.send("/quit")
+
+        for spec in command_specs_for_session(session):
+            session.send("{0} - {1}".format(spec.usage, spec.summary))
 
 @register_command
 class LookCommand(Command):
     name = "look"
     aliases = ("l",)
+    usage = "/look [object or person]"
+    summary = "Look around or inspect something visible."
 
     def execute(self, session, arguments):
         player = session.player
@@ -73,6 +89,8 @@ class LookCommand(Command):
 class GoCommand(Command):
     name = "go"
     aliases = ()
+    usage = "/go <direction>"
+    summary = "Travel through an exit."
 
     def execute(self, session, arguments):
         direction = arguments.strip().lower()
@@ -86,6 +104,7 @@ class GoCommand(Command):
 
 class DirectionCommand(Command):
     direction = None
+    summary = "Travel through this directional exit."
 
     def execute(self, session, arguments):
         session.move(self.direction)
@@ -137,6 +156,8 @@ class DownCommand(DirectionCommand):
 class EmoteCommand(Command):
     name = "me"
     aliases = ("emote",)
+    usage = "/me <action>"
+    summary = "Perform an action visible to everyone in the room."
 
     def execute(self, session, arguments):
         if not arguments:
@@ -155,6 +176,8 @@ class EmoteCommand(Command):
 class InventoryCommand(Command):
     name = "inventory"
     aliases = ("inv", "i")
+    usage = "/inventory"
+    summary = "List everything you are carrying and wearing."
 
     def execute(self, session, arguments):
         player = session.player
@@ -177,6 +200,8 @@ class InventoryCommand(Command):
 class DrinkCommand(Command):
     name = "drink"
     aliases = ("quaff",)
+    usage = "/drink <drink>"
+    summary = "Consume a drink from your inventory."
 
     def execute(self, session, arguments):
         player = session.player
@@ -210,6 +235,8 @@ class DrinkCommand(Command):
 class TakeCommand(Command):
     name = "take"
     aliases = ("get",)
+    usage = "/take <object>"
+    summary = "Take an item from the room."
 
     def execute(self, session, arguments):
         player = session.player
@@ -276,6 +303,8 @@ class TakeCommand(Command):
 class DropCommand(Command):
     name = "drop"
     aliases = ()
+    usage = "/drop <object>"
+    summary = "Put down an item you are carrying."
 
     def execute(self, session, arguments):
         player = session.player
@@ -315,6 +344,8 @@ class DropCommand(Command):
 class EquipCommand(Command):
     name = "equip"
     aliases = ("wear",)
+    usage = "/equip <object>"
+    summary = "Wear an equippable item from your inventory."
 
     def execute(self, session, arguments):
         player = session.player
@@ -345,6 +376,8 @@ class EquipCommand(Command):
 class StatsCommand(Command):
     name = "stats"
     aliases = ()
+    usage = "/stats"
+    summary = "Show your health, intoxication and fabulousness."
 
     def execute(self, session, arguments):
         player = session.player
@@ -368,6 +401,8 @@ class StatsCommand(Command):
 class QuitCommand(Command):
     name = "quit"
     aliases = ("exit",)
+    usage = "/quit"
+    summary = "Save your character and leave BlingMUD."
 
     def execute(self, session, arguments):
         session.send("Goodbye!")

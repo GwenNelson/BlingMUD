@@ -86,6 +86,27 @@ class TelnetInputParser(object):
         self.pending_cr = False
         self.decoder = self._new_decoder()
 
+    def replace_current_text(self, text):
+        """Replace editable text with filtered, bounded trusted completion."""
+        if not isinstance(text, str):
+            raise TypeError("replacement input must be text")
+
+        characters = []
+
+        for character in text:
+            if not _allowed_input_character(character):
+                continue
+
+            if len(characters) >= self.maximum_length:
+                break
+
+            characters.append(character)
+
+        self.characters = characters
+        self.pending_cr = False
+        self.decoder = self._new_decoder()
+        return self.current_text
+
     def _append_decoded(self, text, events):
         accepted = []
 

@@ -93,7 +93,9 @@ Commands / UX
 ☐ Implement or improve `/tell`.
 ☐ Implement or improve `/hug`.
 ☐ Implement or improve `/flirt`.
-☐ Drive command-aware help and actual input replacement/completion from the implemented Tab events.
+☒ Add validated global and room-local command specs, generate list/detail help from live availability, and drive bounded command-token completion from Tab events.
+☒ Canonicalize exact aliases and unique prefixes, filter admin-only candidates, and use expected-text compare-and-replace so delayed completion cannot overwrite newer input.
+☐ Extend completion to safe argument candidates only where a future command explicitly declares a bounded provider.
 ☐ Make room-local verbs and NPC-specific interactions easier to define.
 
 Village content

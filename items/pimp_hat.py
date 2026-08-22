@@ -33,6 +33,8 @@ class PimpHat(Item):
 class BlingCommand(Command):
     name = "bling"
     aliases = ()
+    usage = "/bling"
+    summary = "Summon an enormous and excessively fabulous pimp hat."
 
     def execute(self, session, arguments):
         player = session.player
@@ -51,4 +53,3 @@ class BlingCommand(Command):
         )
         player.room.broadcast("")
         session.send("It lands at your feet with impossible style.")
-

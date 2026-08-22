@@ -1,4 +1,4 @@
-from core import NPCAction, PLAYER_INVENTORY_LIMIT, Room
+from core import CommandSpec, NPCAction, PLAYER_INVENTORY_LIMIT, Room
 from items.pimp_hat import PimpHat
 from items.possum_token import RoyalPossumBottleCap
 from npcs.bin_possum import BinPossum, BinPossumBehavior
@@ -6,6 +6,26 @@ from npcs.bin_possum import BinPossum, BinPossumBehavior
 
 class SuspiciousAlley(Room):
     """A small, stateful encounter hidden behind the town-square bin."""
+
+    command_specs = (
+        CommandSpec(
+            "search",
+            "/search <thing>",
+            "Search the alley for suspicious secrets.",
+            aliases=("rummage",)
+        ),
+        CommandSpec(
+            "offer",
+            "/offer [possum] <item>",
+            "Offer a carried item to the revealed bin possum."
+        ),
+        CommandSpec(
+            "pet",
+            "/pet possum",
+            "Attempt a diplomatic pat of the bin possum.",
+            aliases=("stroke",)
+        )
+    )
 
     BIN_TARGETS = ("bin", "the bin", "rubbish bin", "trash bin")
     POSSUM_TARGETS = (

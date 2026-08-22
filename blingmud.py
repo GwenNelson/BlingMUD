@@ -353,6 +353,9 @@ from commands.core import *
 @register_command
 class AdminCommand(Command):
     name = "admin"
+    aliases = ()
+    usage = "/admin"
+    summary = "Authenticate this session for administrative commands."
     def execute(self,session,arguments):
         global ADMIN_PASSWORD_HASH
 
@@ -391,6 +394,8 @@ class AdminCommand(Command):
 class WhoCommand(Command):
     name = "who"
     aliases = ()
+    usage = "/who"
+    summary = "List authenticated players currently online."
 
     def execute(self, session, arguments):
         with SESSIONS_LOCK:
@@ -410,6 +415,8 @@ class WhoCommand(Command):
 class WorshipCommand(Command):
     name = "worship"
     aliases = ()
+    usage = "/worship <person>"
+    summary = "Offer the appropriate reverence to someone in the room."
 
     def execute(self, session, arguments):
         player = session.player
@@ -778,7 +785,53 @@ class Session(object):
                     return event.text.strip()
 
     def handle_tab_completion(self, current_text):
-        """Receive an explicit Tab event; completion lands in stage 6."""
+        """Complete the command token without clobbering newer input."""
+        if self.input_hidden:
+            try:
+                with self.send_lock:
+                    self.request.sendall(b"\a")
+            except Exception:
+                self.running = False
+            return
+
+        replacement, candidates = complete_command_text(
+            self,
+            current_text
+        )
+
+        if replacement is not None:
+            replacer = getattr(self.request, "replace_current_input", None)
+
+            with self.send_lock:
+                if replacer is None:
+                    if self.input_parser.current_text != current_text:
+                        accepted = None
+                    else:
+                        accepted = self.input_parser.replace_current_text(
+                            replacement
+                        )
+                else:
+                    accepted = replacer(current_text, replacement)
+
+                if accepted is not None:
+                    self.current_input = accepted
+                    self.request.sendall(b"\r\033[2K")
+                    self.request.sendall(
+                        (self.prompt_text + accepted).encode(
+                            "utf-8",
+                            "replace"
+                        )
+                    )
+                    return
+
+        if candidates:
+            self.send(
+                "Matches: {0}".format(
+                    ", ".join("/" + name for name in candidates)
+                )
+            )
+            return
+
         try:
             with self.send_lock:
                 self.request.sendall(b"\a")

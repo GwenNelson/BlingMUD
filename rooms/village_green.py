@@ -1,6 +1,6 @@
 import time
 
-from core import NPCAction, Room
+from core import CommandSpec, NPCAction, Room
 from npcs.falling_acorn import FallingAcornHazard
 from npcs.wisp_mother import WispMother
 
@@ -11,6 +11,27 @@ def _is_night_now():
 
 
 class VillageGreen(Room):
+    command_specs = (
+        CommandSpec(
+            "examine",
+            "/examine wisp mother",
+            "Examine a feature or being in the Village Green.",
+            aliases=("inspect",)
+        ),
+        CommandSpec(
+            "protect",
+            "/protect wisp mother",
+            "Place a one-hit protective ward around the Wisp Mother.",
+            aliases=("guard",)
+        ),
+        CommandSpec(
+            "attack",
+            "/attack wisp mother",
+            "Commit an act the village will remember.",
+            aliases=("hit",)
+        )
+    )
+
     WISP_TARGETS = (
         "wisp mother",
         "the wisp mother",

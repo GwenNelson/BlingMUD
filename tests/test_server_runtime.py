@@ -316,6 +316,57 @@ class SelectorConnectionTests(unittest.TestCase):
         self.assertFalse(worker.is_alive())
         self.assertTrue(completed.is_set())
 
+    def test_command_completion_replaces_matching_live_input(self):
+        self.connection.authenticated = True
+        self.session.player = blingmud.Player("Completer")
+        self.session.player.session = self.session
+        blingmud.WORLD.starting_room.enter(
+            self.session.player,
+            announce=False
+        )
+        self.session.prompt("> ")
+        self.connection.feed_received(b"/lo")
+
+        try:
+            self.session.handle_tab_completion("/lo")
+
+            self.assertEqual(
+                self.connection.input_parser.current_text,
+                "/look "
+            )
+            self.assertEqual(self.session.current_input, "/look ")
+        finally:
+            blingmud.WORLD.starting_room.leave(
+                self.session.player,
+                announce=False
+            )
+
+    def test_stale_tab_event_cannot_clobber_newer_input(self):
+        self.connection.authenticated = True
+        self.session.player = blingmud.Player("FastTyper")
+        self.session.player.session = self.session
+        blingmud.WORLD.starting_room.enter(
+            self.session.player,
+            announce=False
+        )
+        self.session.prompt("> ")
+        self.connection.feed_received(b"/lo")
+        stale_text = self.connection.input_parser.current_text
+        self.connection.feed_received(b"ok")
+
+        try:
+            self.session.handle_tab_completion(stale_text)
+
+            self.assertEqual(
+                self.connection.input_parser.current_text,
+                "/look"
+            )
+        finally:
+            blingmud.WORLD.starting_room.leave(
+                self.session.player,
+                announce=False
+            )
+
     def test_fragmented_telnet_negotiation_does_not_enter_input(self):
         self.connection.authenticated = True
         self.connection.feed_received(bytes((server_runtime.IAC,)))
