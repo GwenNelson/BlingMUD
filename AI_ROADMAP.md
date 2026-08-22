@@ -2,6 +2,7 @@
 
 Agent instructions
 
+- Do not patch blindly from assumptions.
 - Always begin by reviewing what is already in place, what still needs doing, and what known bugs exist.
 - Never assume something is implemented until it has been verified in the codebase.
 - Always fix any known bugs first unless explicitly told not to.
