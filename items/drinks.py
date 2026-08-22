@@ -5,11 +5,17 @@ class Drink(Item):
     healing = 0
     intoxication_gain = 0
 
-    def apply_to(self, player):
+    def refusal_message(self, player):
         if (
             self.intoxication_gain > 0
             and player.intoxication >= MAX_INTOXICATION
         ):
+            return "You are too intoxicated for another alcoholic drink."
+
+        return None
+
+    def apply_to(self, player):
+        if self.refusal_message(player) is not None:
             return None
 
         healed = player.heal(self.healing)
@@ -23,6 +29,9 @@ class Drink(Item):
 
     def consumption_message(self, result):
         return "You finish the {0}.".format(self.name)
+
+    def consumed_after_drinking(self, result):
+        return True
 
 
 class ValHealingPotion(Drink):
@@ -88,5 +97,75 @@ class HornBornSpecial(Drink):
             "intoxication.".format(
                 result["healed"],
                 result["intoxication_gained"]
+            )
+        )
+
+
+class AcornGoblet(Drink):
+    """A reusable Corbel goblet containing at most one known Val drink."""
+
+    ALLOWED_DRINK_TYPES = (
+        ValHealingPotion,
+        ValkyrieMead,
+        HornBornSpecial
+    )
+
+    def __init__(self, held_drink=None):
+        Item.__init__(
+            self,
+            "acorn goblet",
+            "An ornate, practical goblet turned from one giant acorn shell. "
+            "Its cup is dry and ready for Val's horn."
+        )
+        self.held_drink = None
+
+        if held_drink is not None and not self.fill(held_drink):
+            raise ValueError("unsupported acorn goblet drink")
+
+    def fill(self, drink):
+        if self.held_drink is not None:
+            return False
+
+        if not isinstance(drink, self.ALLOWED_DRINK_TYPES):
+            return False
+
+        self.held_drink = drink
+        return True
+
+    def refusal_message(self, player):
+        if self.held_drink is None:
+            return "The acorn goblet is empty. Ask Val to fill it."
+
+        return self.held_drink.refusal_message(player)
+
+    def apply_to(self, player):
+        if self.refusal_message(player) is not None:
+            return None
+
+        result = self.held_drink.apply_to(player)
+
+        if result is None:
+            return None
+
+        self.held_drink = None
+        return result
+
+    def consumption_message(self, result):
+        return "From the acorn goblet: {0}".format(
+            self.held_drink.consumption_message(result)
+            if self.held_drink is not None
+            else "The last of Val's drink goes down very well."
+        )
+
+    def consumed_after_drinking(self, result):
+        return False
+
+    def look(self, viewer):
+        if self.held_drink is None:
+            return self.description
+
+        return (
+            "The acorn goblet currently holds {0}.".format(
+                self.held_drink.name
             )
         )

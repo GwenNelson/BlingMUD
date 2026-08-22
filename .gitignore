@@ -3,3 +3,4 @@ users.sqlite
 __pycache__
 *.pyc
 .test-tmp/
+openrouter.key

@@ -4,6 +4,7 @@ import time
 
 from core import (
     DEFAULT_MAX_HEALTH,
+    MAX_COINS,
     MAX_HEALTH,
     MAX_INTOXICATION,
     MAX_STATUS_TIMESTAMP,
@@ -13,9 +14,11 @@ from items.pimp_hat import PimpHat
 from items.possum_token import RoyalPossumBottleCap
 from items.giant_acorn import GiantAcorn
 from items.drinks import HornBornSpecial, ValHealingPotion, ValkyrieMead
+from items.drinks import AcornGoblet
+from items.food import AcornMash
 
 
-PLAYER_STATE_VERSION = 2
+PLAYER_STATE_VERSION = 3
 MAX_PLAYER_STATE_BYTES = 65536
 MAX_INVENTORY_ITEMS = PLAYER_INVENTORY_LIMIT
 MAX_EQUIPMENT_SLOTS = 32
@@ -29,6 +32,8 @@ ITEM_FACTORIES = {
     "val_healing_potion": ValHealingPotion,
     "valkyrie_mead": ValkyrieMead,
     "horn_born_special": HornBornSpecial
+    ,"acorn_goblet": AcornGoblet
+    ,"acorn_mash": AcornMash
 }
 
 ITEM_TEMPLATE_IDS = {
@@ -38,6 +43,8 @@ ITEM_TEMPLATE_IDS = {
     ValHealingPotion: "val_healing_potion",
     ValkyrieMead: "valkyrie_mead",
     HornBornSpecial: "horn_born_special"
+    ,AcornGoblet: "acorn_goblet"
+    ,AcornMash: "acorn_mash"
 }
 
 
@@ -58,7 +65,8 @@ def _default_document(time_source=None):
             "fabulousness": 0,
             "max_health": DEFAULT_MAX_HEALTH,
             "health": DEFAULT_MAX_HEALTH,
-            "intoxication": 0
+            "intoxication": 0,
+            "coins": 0
         },
         "inventory": [],
         "equipment": {},
@@ -156,6 +164,7 @@ def serialize_player_state(player):
         0,
         MAX_INTOXICATION
     )
+    coins = _validated_integer("coins", player.coins, 0, MAX_COINS)
     recently_respawned = player.recently_respawned
 
     if not isinstance(recently_respawned, bool):
@@ -183,7 +192,26 @@ def serialize_player_state(player):
             )
 
         inventory_indexes[object_key] = index
-        inventory.append({"template": template_id})
+        item_data = {"template": template_id}
+
+        if isinstance(item, AcornGoblet):
+            held_drink = item.held_drink
+            held_template = None
+
+            if held_drink is not None:
+                held_template = ITEM_TEMPLATE_IDS.get(type(held_drink))
+                if held_template not in (
+                    "val_healing_potion",
+                    "valkyrie_mead",
+                    "horn_born_special"
+                ):
+                    raise PlayerStateError(
+                        "acorn goblet contains an unsupported drink"
+                    )
+
+            item_data["drink"] = held_template
+
+        inventory.append(item_data)
 
     equipment = {}
 
@@ -210,7 +238,8 @@ def serialize_player_state(player):
             "fabulousness": _validated_fabulousness(player.fabulousness),
             "max_health": max_health,
             "health": health,
-            "intoxication": intoxication
+            "intoxication": intoxication,
+            "coins": coins
         },
         "inventory": inventory,
         "equipment": equipment,
@@ -238,7 +267,7 @@ def _migrate_version_one(document, now):
         }
 
     return {
-        "version": PLAYER_STATE_VERSION,
+        "version": 2,
         "room_id": document.get("room_id"),
         "stats": stats,
         "inventory": document.get("inventory"),
@@ -247,6 +276,23 @@ def _migrate_version_one(document, now):
             "recently_respawned": False,
             "last_status_update": now
         }
+    }
+
+
+def _migrate_version_two(document):
+    stats = document.get("stats")
+
+    if isinstance(stats, dict):
+        stats = dict(stats)
+        stats["coins"] = 0
+
+    return {
+        "version": PLAYER_STATE_VERSION,
+        "room_id": document.get("room_id"),
+        "stats": stats,
+        "inventory": document.get("inventory"),
+        "equipment": document.get("equipment"),
+        "status": document.get("status")
     }
 
 
@@ -276,6 +322,10 @@ def _decode_document(encoded_state, time_source=None):
 
     if version == 1:
         document = _migrate_version_one(document, now)
+        version = 2
+
+    if version == 2:
+        document = _migrate_version_two(document)
     elif version != PLAYER_STATE_VERSION:
         raise PlayerStateError("unsupported player state version")
 
@@ -307,7 +357,8 @@ def restore_player_state(player, encoded_state, world, time_source=None):
         "fabulousness",
         "max_health",
         "health",
-        "intoxication"
+        "intoxication",
+        "coins"
     )):
         raise PlayerStateError("player stats have unknown or missing fields")
 
@@ -330,6 +381,7 @@ def restore_player_state(player, encoded_state, world, time_source=None):
         0,
         MAX_INTOXICATION
     )
+    coins = _validated_integer("coins", stats.get("coins"), 0, MAX_COINS)
 
     if not isinstance(status, dict) or set(status) != set((
         "recently_respawned",
@@ -363,13 +415,38 @@ def restore_player_state(player, encoded_state, world, time_source=None):
         if not isinstance(item_data, dict):
             raise PlayerStateError("inventory entry must be an object")
 
-        if set(item_data.keys()) != set(("template",)):
-            raise PlayerStateError("inventory entry has unsupported fields")
-
-        factory = ITEM_FACTORIES.get(item_data.get("template"))
+        template = item_data.get("template")
+        factory = ITEM_FACTORIES.get(template)
 
         if factory is None:
             raise PlayerStateError("inventory uses an unknown item template")
+
+        if template == "acorn_goblet":
+            if set(item_data.keys()) != set(("template", "drink")):
+                raise PlayerStateError(
+                    "acorn goblet entry has unsupported fields"
+                )
+
+            held_template = item_data.get("drink")
+
+            if held_template is None:
+                inventory.append(AcornGoblet())
+                continue
+
+            if held_template not in (
+                "val_healing_potion",
+                "valkyrie_mead",
+                "horn_born_special"
+            ):
+                raise PlayerStateError(
+                    "acorn goblet contains an unsupported drink"
+                )
+
+            inventory.append(AcornGoblet(ITEM_FACTORIES[held_template]()))
+            continue
+
+        if set(item_data.keys()) != set(("template",)):
+            raise PlayerStateError("inventory entry has unsupported fields")
 
         inventory.append(factory())
 
@@ -412,6 +489,7 @@ def restore_player_state(player, encoded_state, world, time_source=None):
     player.max_health = max_health
     player.health = health
     player.intoxication = intoxication
+    player.coins = coins
     player.recently_respawned = recently_respawned
     player.last_status_update = current_status_update
 

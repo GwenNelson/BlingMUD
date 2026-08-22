@@ -60,7 +60,7 @@ For an orderly stop, authenticate with `/admin` and use `/shutdown now [reason]`
 
 ### Persistent files and backups
 
-`users.sqlite` in the working directory contains accounts, password hashes, character JSON, and the single shared village-state row. `admin.hash` contains only the session-admin password hash. Both are ignored by Git. Character state is strict version-2 JSON; village state is strict version-1 JSON; startup applies known SQLite and character migrations and refuses an unknown newer database schema.
+`users.sqlite` is resolved to an absolute path at startup and contains accounts, password hashes, character JSON, and the single shared village-state row. `admin.hash` contains only the session-admin password hash. Both are ignored by Git. `openrouter.key`, if created for a future optional provider, is also ignored and must contain only the raw local key. Character state is strict version-3 JSON, including bounded coins and only whitelisted Goblet contents; village state is strict version-1 JSON; account storage is schema version 3 with canonical username-key repair; startup applies known SQLite and character migrations and refuses an unknown newer database schema.
 
 Use `/save all` or `/shutdown now`, wait for completion, and copy `users.sqlite` while BlingMUD is stopped. A raw file copy during an active SQLite transaction is not the documented backup path. Keep `admin.hash` private, and do not hand-edit serialized JSON unless you are prepared for validation to reject it and restore safe defaults.
 

@@ -3,6 +3,7 @@
 
 from core import *
 from items.drinks import Drink
+from items.food import Food
 
 @register_command
 class HelpCommand(Command):
@@ -215,18 +216,51 @@ class DrinkCommand(Command):
             session.send("That is not something you can drink.")
             return
 
+        refusal = item.refusal_message(player)
+
+        if refusal is not None:
+            session.send(refusal)
+            return
+
         result = item.apply_to(player)
 
         if result is None:
-            session.send(
-                "You are too intoxicated for another alcoholic drink."
-            )
+            session.send("That drink cannot be consumed right now.")
             return
 
-        player.inventory.remove(item)
+        if item.consumed_after_drinking(result):
+            player.inventory.remove(item)
         session.send(item.consumption_message(result))
         player.room.broadcast(
             "* {0} drinks {1}.".format(player.name, item.name),
+            exclude=session
+        )
+
+
+@register_command
+class EatCommand(Command):
+    name = "eat"
+    aliases = ()
+    usage = "/eat <food>"
+    summary = "Eat a food item from your inventory."
+
+    def execute(self, session, arguments):
+        player = session.player
+        item = player.find_item(arguments)
+
+        if item is None:
+            session.send("You are not carrying that food.")
+            return
+
+        if not isinstance(item, Food):
+            session.send("That is not something you can eat.")
+            return
+
+        result = item.apply_to(player)
+        player.inventory.remove(item)
+        session.send(item.consumption_message(result))
+        player.room.broadcast(
+            "* {0} eats {1}.".format(player.name, item.name),
             exclude=session
         )
 

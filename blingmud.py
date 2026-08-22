@@ -57,7 +57,7 @@ from world_state import (
 )
 
 USERS_DB = 'users.sqlite'
-DATABASE_SCHEMA_VERSION = 2
+DATABASE_SCHEMA_VERSION = 3
 HOST = "0.0.0.0"
 PORT = 4000
 
@@ -99,6 +99,18 @@ class DatabaseMigrationError(RuntimeError):
     pass
 
 
+def canonical_username(username):
+    """Return the one username key used by storage, auth, and sessions."""
+    if not isinstance(username, str):
+        raise TypeError("username must be text")
+
+    normalized = unicodedata.normalize("NFC", username.strip())
+    if not normalized:
+        raise ValueError("username must not be empty")
+
+    return normalized.casefold()
+
+
 def _validate_database_schema(cursor):
     expected_tables = {
         "users": (
@@ -122,6 +134,77 @@ def _validate_database_schema(cursor):
                     table_name
                 )
             )
+
+
+def _account_key_values(cursor):
+    """Return canonical account keys, or reject ambiguous legacy data."""
+    rows = cursor.execute(
+        "SELECT rowid, username, username_lower FROM users ORDER BY rowid"
+    ).fetchall()
+    seen = {}
+    values = []
+
+    for rowid, username, stored_key in rows:
+        try:
+            expected_key = canonical_username(username)
+        except (TypeError, ValueError) as error:
+            raise DatabaseMigrationError(
+                "account row {0} has an invalid username: {1}".format(
+                    rowid,
+                    type(error).__name__
+                )
+            )
+
+        previous = seen.get(expected_key)
+        if previous is not None and previous != rowid:
+            raise DatabaseMigrationError(
+                "account username keys collide during migration"
+            )
+
+        seen[expected_key] = rowid
+        values.append((rowid, expected_key, stored_key))
+
+    return values
+
+
+def _account_key_updates(cursor):
+    """Return safe account-key repairs, or reject ambiguous legacy data."""
+    return [
+        (rowid, expected_key)
+        for rowid, expected_key, stored_key in _account_key_values(cursor)
+        if stored_key != expected_key
+    ]
+
+
+def _repair_account_keys(cursor):
+    values = _account_key_values(cursor)
+    updates = [
+        (rowid, expected_key)
+        for rowid, expected_key, stored_key in values
+        if stored_key != expected_key
+    ]
+    if not updates:
+        return 0
+
+    # Clear the unique-key namespace first so swapped or stale keys cannot
+    # cause a transient UNIQUE constraint failure during a safe repair.
+    cursor.execute(
+        "UPDATE users SET username_lower='__migration__' || rowid"
+    )
+    for rowid, expected_key, unused_stored_key in values:
+        cursor.execute(
+            "UPDATE users SET username_lower=? WHERE rowid=?",
+            (expected_key, rowid)
+        )
+
+    return len(updates)
+
+
+def _validate_account_keys(cursor):
+    if _account_key_updates(cursor):
+        raise DatabaseMigrationError(
+            "database account username keys are inconsistent"
+        )
 TELOPT_LINEMODE = 34
 
 def password_hash(password):
@@ -229,6 +312,8 @@ def write_admin_password_hash(stored_hash, filename="admin.hash"):
 
 
 def init_user_database():
+    global USERS_DB
+    USERS_DB = os.path.abspath(USERS_DB)
     connection = sqlite3.connect(USERS_DB)
 
     try:
@@ -273,6 +358,12 @@ def init_user_database():
             )
 
         _validate_database_schema(cursor)
+
+        if current_version < 3:
+            _repair_account_keys(cursor)
+        else:
+            _validate_account_keys(cursor)
+
         cursor.execute(
             "PRAGMA user_version = {0}".format(DATABASE_SCHEMA_VERSION)
         )
@@ -295,7 +386,7 @@ def user_exists(username):
 
         cursor.execute(
             "SELECT 1 FROM users WHERE username_lower=?",
-            (username.lower(),)
+            (canonical_username(username),)
         )
 
         return cursor.fetchone() is not None
@@ -310,6 +401,7 @@ def create_user(username, password):
     try:
         cursor = connection.cursor()
 
+        display_name = unicodedata.normalize("NFC", username.strip())
         cursor.execute(
             """
             INSERT INTO users
@@ -317,8 +409,8 @@ def create_user(username, password):
             VALUES (?, ?, ?, ?)
             """,
             (
-                username,
-                username.lower(),
+                display_name,
+                canonical_username(display_name),
                 password_hash(password),
                 new_player_state_json()
             )
@@ -344,7 +436,7 @@ def load_user(username):
             FROM users
             WHERE username_lower=?
             """,
-            (username.lower(),)
+            (canonical_username(username),)
         )
 
         row = cursor.fetchone()
@@ -369,7 +461,7 @@ def update_user_password_hash(username, new_password_hash):
         cursor = connection.cursor()
         cursor.execute(
             "UPDATE users SET password_hash=? WHERE username_lower=?",
-            (new_password_hash, username.lower())
+            (new_password_hash, canonical_username(username))
         )
         connection.commit()
 
@@ -398,7 +490,7 @@ def update_user_state(username, encoded_state):
         cursor = connection.cursor()
         cursor.execute(
             "UPDATE users SET json_state=? WHERE username_lower=?",
-            (encoded_state, username.lower())
+            (encoded_state, canonical_username(username))
         )
 
         if cursor.rowcount != 1:
@@ -477,7 +569,43 @@ def find_active_session(player_name):
         return None
 
     with SESSIONS_LOCK:
-        return SESSIONS.get(player_name.lower())
+        return SESSIONS.get(canonical_username(player_name))
+
+
+def database_status_snapshot():
+    """Return bounded, non-secret database identity and account status."""
+    path = os.path.abspath(USERS_DB)
+    real_path = os.path.realpath(path)
+
+    try:
+        identity = os.stat(real_path)
+        connection = sqlite3.connect(path)
+        try:
+            cursor = connection.cursor()
+            version = cursor.execute("PRAGMA user_version").fetchone()[0]
+            accounts = cursor.execute(
+                "SELECT COUNT(*) FROM users"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error):
+        return {
+            "path": path,
+            "real_path": real_path,
+            "device": None,
+            "inode": None,
+            "schema": None,
+            "accounts": None
+        }
+
+    return {
+        "path": path,
+        "real_path": real_path,
+        "device": identity.st_dev,
+        "inode": identity.st_ino,
+        "schema": version,
+        "accounts": accounts
+    }
 
 
 def validated_admin_text(value, label="reason", maximum=200):
@@ -500,6 +628,7 @@ from rooms.suspicious_alley import SuspiciousAlley
 from rooms.hanging_tree import HangingTreeCanopy
 from rooms.village_green import VillageGreen
 from rooms.vals_hella_holler import ValsHellaHoller
+from rooms.corbels_turnery import CorbelsTurnery
 from village_state import VillageState
 
 from commands.core import *
@@ -908,6 +1037,19 @@ class AdminStatusCommand(Command):
                 npc_state["active"],
                 npc_state["unresponsive"],
                 npc_state["queued"]
+            )
+        )
+
+        database = database_status_snapshot()
+        session.send(
+            "database: path={0} realpath={1} device={2} inode={3} "
+            "schema={4} accounts={5}".format(
+                database["path"],
+                database["real_path"],
+                database["device"],
+                database["inode"],
+                database["schema"],
+                database["accounts"]
             )
         )
 
@@ -1494,7 +1636,7 @@ class Session(object):
             if name.lower() == "newuser":
                 return self.create_user()
 
-            key = name.lower()
+            key = canonical_username(name)
 
             with USERS_LOCK:
                 account = load_user(name)
@@ -1663,7 +1805,7 @@ class Session(object):
                 )
                 continue
 
-            key = name.lower()
+            key = canonical_username(name)
 
             with USERS_LOCK:
                 if user_exists(name):
@@ -1890,7 +2032,7 @@ class Session(object):
             player_name = "unknown"
 
             if self.player is not None:
-                player_name = self.player.name.lower()
+                player_name = canonical_username(self.player.name)
 
             worker = threading.Thread(
                 target=self.run_authenticated,
@@ -2008,7 +2150,7 @@ class Session(object):
                 if player.room is not None:
                     player.room.leave(player)
 
-            key = player.name.lower()
+            key = canonical_username(player.name)
 
             with SESSIONS_LOCK:
                 if SESSIONS.get(key) is self:
@@ -2066,6 +2208,7 @@ class World(object):
         green = self.add_room(VillageGreen(self.village_state))
         canopy = self.add_room(HangingTreeCanopy(self.village_state))
         tavern = self.add_room(ValsHellaHoller(self.village_state))
+        turnery = self.add_room(CorbelsTurnery())
 
         square.add_exit("north", chamber)
         chamber.add_exit("south", square)
@@ -2084,6 +2227,9 @@ class World(object):
 
         green.add_exit("north", tavern)
         tavern.add_exit("south", green)
+
+        green.add_exit("west", turnery)
+        turnery.add_exit("east", green)
 
         self.starting_room = square
 
@@ -2630,7 +2776,7 @@ class PreAuthController(object):
         invalid_state,
         stored_state
     ):
-        key = player.name.lower()
+        key = canonical_username(player.name)
 
         with SESSIONS_LOCK:
             if key in SESSIONS:

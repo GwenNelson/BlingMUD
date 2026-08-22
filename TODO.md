@@ -14,6 +14,10 @@ Priority rules for human patches:
 
 Known bugs / first fixes
 
+☒ Investigate and fix contradictory account messages where registration reports an existing name but login reports no such user: unify username canonicalization, repair safe stale account keys during schema-v3 migration, reject collisions without data loss, normalize the database path at startup, and add bounded admin database identity diagnostics.
+
+☐ On production, compare the `/adminstatus` database path/realpath/device/inode output and authentication timestamps across all server processes or frontends; confirm the affected user is reaching the same database instance after deployment.
+
 ☒ Fix the command dispatcher bug in `Session.handle_command` where `session` is referenced instead of `self`.
 ☒ Fix the wearable-slot bug in `Item.__init__` where `worn_where` is ignored and all wearable items become `Head`.
 ☒ Add regression tests for both issues.
@@ -124,7 +128,7 @@ Village content
 ☒ Add the initial Village Green and Hanging Tree canopy with `/up`/`/down`, day/night Wisp descriptions, both acorn harvest verbs, bounded giant-acorn supply, and a room-aware low-harvest bonking hazard.
 ☒ Persist bounded acorn supply/danger/harvest totals and Wisp ward/absence/harm state across restarts using strict version-1 world JSON and a one-key asynchronous writer.
 ☐ Make canopy supply renewable across time without enabling unbounded item creation.
-☐ Add Master Corbel, Acorn Goblets, and Acorn Mash.
+☒ Add Master Corbel's local-FSM turnery, fixed-price giant-acorn trade/crafting, persistent Acorn Goblets that Val can fill, bounded Acorn Mash food, persistent bounded coins, and the Green-to-Holler loop.
 ☐ Add the Smithereens, Eisele, and Tackdriver.
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects.
 ☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec.

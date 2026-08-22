@@ -1,7 +1,12 @@
 import random
 
 from core import CommandSpec, NPCAction, PLAYER_INVENTORY_LIMIT, Room
-from items.drinks import HornBornSpecial, ValHealingPotion, ValkyrieMead
+from items.drinks import (
+    AcornGoblet,
+    HornBornSpecial,
+    ValHealingPotion,
+    ValkyrieMead
+)
 from npcs.val import Val
 
 
@@ -129,25 +134,41 @@ class ValsHellaHoller(Room):
         player = session.player
 
         with self.lock:
-            if len(player.inventory) >= PLAYER_INVENTORY_LIMIT:
-                item = None
+            lowered = concept.lower()
+
+            if any(
+                word in lowered
+                for word in ("heal", "health", "potion")
+            ):
+                drink = ValHealingPotion()
+            elif any(
+                word in lowered
+                for word in ("mead", "ale", "beer", "cider", "wine")
+            ):
+                drink = ValkyrieMead()
             else:
-                lowered = concept.lower()
+                drink = HornBornSpecial()
 
-                if any(
-                    word in lowered
-                    for word in ("heal", "health", "potion")
-                ):
-                    item = ValHealingPotion()
-                elif any(
-                    word in lowered
-                    for word in ("mead", "ale", "beer", "cider", "wine")
-                ):
-                    item = ValkyrieMead()
-                else:
-                    item = HornBornSpecial()
+            goblet = next(
+                (
+                    item for item in player.inventory
+                    if isinstance(item, AcornGoblet)
+                    and item.held_drink is None
+                ),
+                None
+            )
 
-                player.inventory.append(item)
+            if goblet is not None:
+                goblet.fill(drink)
+                item = goblet
+                served_in_goblet = True
+            elif len(player.inventory) >= PLAYER_INVENTORY_LIMIT:
+                item = None
+                served_in_goblet = False
+            else:
+                player.inventory.append(drink)
+                item = drink
+                served_in_goblet = False
 
         if item is None:
             session.send("You cannot carry another drink.")
@@ -155,8 +176,10 @@ class ValsHellaHoller(Room):
 
         self.val.perform_action(
             NPCAction.emote(
-                "tips the magical horn; impossible colours pour into a "
-                "perfectly ordinary mug."
+                "tips the magical horn; impossible colours pour into {0}.".format(
+                    "your acorn goblet"
+                    if served_in_goblet else "a perfectly ordinary mug"
+                )
             )
         )
         self.val.perform_action(

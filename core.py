@@ -17,6 +17,7 @@ ROOM_ITEM_LIMIT = 100
 DEFAULT_MAX_HEALTH = 100
 MAX_HEALTH = 10000
 MAX_INTOXICATION = 100
+MAX_COINS = 100000
 MAX_STATUS_TIMESTAMP = 32503680000.0
 RESERVED_GLOBAL_COMMANDS = frozenset((
     "admin",
@@ -365,6 +366,7 @@ class Player(Entity):
         self.max_health = DEFAULT_MAX_HEALTH
         self.health = self.max_health
         self.intoxication = 0
+        self.coins = 0
         self.recently_respawned = False
         self.last_status_update = time.time()
 
@@ -412,6 +414,22 @@ class Player(Entity):
 
         self.intoxication = new_intoxication
         return gained
+
+    def add_coins(self, amount):
+        """Add bounded currency and return the amount actually received."""
+        amount = self._bounded_change(amount, "coins")
+        old_coins = self.coins
+        self.coins = min(MAX_COINS, old_coins + amount)
+        return self.coins - old_coins
+
+    def spend_coins(self, amount):
+        """Spend an exact bounded amount without allowing a negative balance."""
+        amount = self._bounded_change(amount, "coins")
+        if self.coins < amount:
+            return False
+
+        self.coins -= amount
+        return True
 
     def mark_status_updated(self, now=None):
         if now is None:

@@ -4,6 +4,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 
 import blingmud
@@ -14,7 +15,13 @@ from core import (
     Player,
     Room
 )
-from items.drinks import HornBornSpecial, ValHealingPotion, ValkyrieMead
+from items.drinks import (
+    AcornGoblet,
+    HornBornSpecial,
+    ValHealingPotion,
+    ValkyrieMead
+)
+from items.food import AcornMash
 from items.giant_acorn import GiantAcorn
 from items.pimp_hat import PimpHat
 from items.possum_token import RoyalPossumBottleCap
@@ -106,6 +113,27 @@ class PlayerStateUnitTests(unittest.TestCase):
         self.assertEqual(restored.intoxication, 46)
         self.assertTrue(restored.recently_respawned)
         self.assertFalse(restored.is_admin)
+
+    def test_state_round_trip_preserves_bounded_coins_and_goblet_contents(self):
+        player = Player("Economist")
+        goblet = AcornGoblet(ValkyrieMead())
+        player.inventory = [goblet, AcornMash()]
+        player.coins = 42
+
+        restored = Player("Economist")
+        restore_player_state(
+            restored,
+            serialize_player_state(player),
+            self.world
+        )
+
+        self.assertEqual(restored.coins, 42)
+        self.assertIsInstance(restored.inventory[0], AcornGoblet)
+        self.assertIsInstance(
+            restored.inventory[0].held_drink,
+            ValkyrieMead
+        )
+        self.assertIsInstance(restored.inventory[1], AcornMash)
 
     def test_legacy_empty_state_migrates_to_safe_defaults(self):
         player = Player("Legacy")
@@ -330,6 +358,153 @@ class PlayerStateDatabaseTests(unittest.TestCase):
         self.assertEqual(document["version"], PLAYER_STATE_VERSION)
         self.assertEqual(document["inventory"], [])
         self.assertIn("status", document)
+
+    def test_account_lookup_is_consistent_after_registration_with_case_changes(self):
+        blingmud.create_user("ZYG4RDE", "a sufficiently long password")
+
+        self.assertTrue(blingmud.user_exists("zyg4rde"))
+        self.assertIsNotNone(blingmud.load_user("Zyg4Rde"))
+        self.assertEqual(
+            blingmud.load_user("Zyg4Rde")["username"],
+            "ZYG4RDE"
+        )
+
+    def test_concurrent_account_creation_accepts_only_one_canonical_name(self):
+        results = []
+        barrier = threading.Barrier(2)
+
+        def create():
+            barrier.wait()
+            results.append(
+                blingmud._create_account_for_authentication(
+                    "ConcurrentUser",
+                    "a sufficiently long password"
+                )
+            )
+
+        workers = [threading.Thread(target=create) for unused in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(2.0)
+
+        self.assertEqual(sorted(results), [False, True])
+        self.assertIsNotNone(blingmud.load_user("concurrentuser"))
+
+    def test_database_path_is_absolute_after_initialization(self):
+        self.assertTrue(os.path.isabs(blingmud.USERS_DB))
+        status = blingmud.database_status_snapshot()
+        self.assertEqual(status["path"], blingmud.USERS_DB)
+        self.assertEqual(status["schema"], blingmud.DATABASE_SCHEMA_VERSION)
+        self.assertEqual(status["accounts"], 0)
+
+    def test_schema_three_repairs_an_unambiguous_stale_account_key(self):
+        connection = sqlite3.connect(self.database_path)
+
+        try:
+            connection.execute(
+                "INSERT INTO users "
+                "(username, username_lower, password_hash, json_state) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    "ZYG4RDE",
+                    "zyg4rde-old",
+                    blingmud.password_hash("a sufficiently long password"),
+                    new_player_state_json()
+                )
+            )
+            connection.execute(
+                "INSERT INTO users "
+                "(username, username_lower, password_hash, json_state) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    "Stable",
+                    "stable",
+                    blingmud.password_hash("a third sufficiently long password"),
+                    new_player_state_json()
+                )
+            )
+            connection.execute(
+                "PRAGMA user_version = 2"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        blingmud.init_user_database()
+
+        self.assertTrue(blingmud.user_exists("zyg4rde"))
+        self.assertIsNotNone(blingmud.load_user("ZYG4RDE"))
+        self.assertTrue(blingmud.user_exists("stable"))
+        connection = sqlite3.connect(self.database_path)
+
+        try:
+            key = connection.execute(
+                "SELECT username_lower FROM users WHERE username=?",
+                ("ZYG4RDE",)
+            ).fetchone()[0]
+            version = connection.execute(
+                "PRAGMA user_version"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(key, "zyg4rde")
+        self.assertEqual(version, blingmud.DATABASE_SCHEMA_VERSION)
+
+    def test_schema_three_rejects_canonical_account_key_collision(self):
+        connection = sqlite3.connect(self.database_path)
+
+        try:
+            connection.execute(
+                "INSERT INTO users "
+                "(username, username_lower, password_hash, json_state) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    "Alice",
+                    "old-alice-one",
+                    blingmud.password_hash("a sufficiently long password"),
+                    new_player_state_json()
+                )
+            )
+            connection.execute(
+                "INSERT INTO users "
+                "(username, username_lower, password_hash, json_state) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    "ALICE",
+                    "old-alice-two",
+                    blingmud.password_hash("another sufficiently long password"),
+                    new_player_state_json()
+                )
+            )
+            connection.execute(
+                "PRAGMA user_version = 2"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(blingmud.DatabaseMigrationError):
+            blingmud.init_user_database()
+
+        connection = sqlite3.connect(self.database_path)
+
+        try:
+            version = connection.execute(
+                "PRAGMA user_version"
+            ).fetchone()[0]
+            keys = connection.execute(
+                "SELECT username_lower FROM users ORDER BY username"
+            ).fetchall()
+        finally:
+            connection.close()
+
+        self.assertEqual(version, 2)
+        self.assertEqual(
+            set(keys),
+            {("old-alice-one",), ("old-alice-two",)}
+        )
 
     def test_database_migrations_are_versioned_and_preserve_accounts(self):
         blingmud.create_user("LegacyRow", "a sufficiently long password")
