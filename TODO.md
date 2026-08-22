@@ -40,6 +40,11 @@ Core engine
 ☒ Warn prominently at startup and before authentication that Telnet is plaintext; suppress password echo and hidden-input redraw without claiming this protects network traffic.
 ☒ Record the accepted residual risk: the listener remains public by default and TLS is deliberately outside the current implementation plan, so operators must control network exposure.
 ☒ Save supported player state on logout before removing the player from their final room, while preserving the previous snapshot if serialization fails.
+☒ Move socket accept/read/write, login input, timeouts, and queued output to `selectors.DefaultSelector` while preserving one sequential gameplay worker per authenticated player and the existing `Session` API.
+☒ Bound the server to 64 total, 32 pre-auth, 32 authenticated, and 8 per-IP connections; bound each output queue to 256 KiB and each authenticated input queue to 64 lines.
+☒ Use a two-worker, 16-pending authentication pool; throttle five failures per IP/account over five minutes and three validated account creations per IP/hour.
+☒ Disconnect pre-auth clients after 120 idle seconds; warn authenticated players with BEL at ten hours and save/disconnect them at twelve hours, resetting idle state on input.
+☐ Replace the transitional line decoder with the complete incremental Telnet/UTF-8 parser, including subnegotiation, escaped IAC, CR-NUL, Unicode backspace, and Tab events.
 ☐ Add periodic autosave without adding an unbounded or uninterruptible background process.
 ☐ Add persistent IDs and templates for rooms, items, and world objects where needed.
   ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat, royal possum bottle cap, giant acorn, Val's healing potion, Valkyrie mead, and horn-born special.

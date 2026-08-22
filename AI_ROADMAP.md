@@ -32,7 +32,7 @@ First fixes
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, prominent plaintext-Telnet warnings at startup and before authentication, deliberate hidden-input echo/redraw suppression, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with six whitelisted item templates plus health/intoxication state and logout save/load, matching gameplay inventory/room-item limits, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, the first Village Green/Hanging Tree/Wisp Mother slice, the initial Val's Hella Holler/Val/fixed-drink slice, and regression coverage for all of them.
+- Implemented now: the first-fix engine bugs above, prominent plaintext-Telnet warnings at startup and before authentication, deliberate hidden-input echo/redraw suppression, selector-owned sockets/pre-auth/timeouts/output, bounded authentication workers and rate limits, one sequential gameplay worker per authenticated player, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with six whitelisted item templates plus health/intoxication state and logout save/load, matching gameplay inventory/room-item limits, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, the first Village Green/Hanging Tree/Wisp Mother slice, the initial Val's Hella Holler/Val/fixed-drink slice, and regression coverage for all of them.
 - Still planned: persistence autosave and future schema migrations beyond the backward-compatible version-1 additions, intoxication decay and richer status effects, optional structured NPC memory, bounded isolation for a trusted callback that never returns, the `llm_fsm` advisory wrapper and OpenRouter failover, popularity/priority budgeting, admin tooling, Corbel and the village economy, durable world-state persistence, richer custom horn drinks/food/prices/regulars, and the remaining village content from the email threads. TLS and encrypted transport are explicitly excluded from this implementation plan; the residual plaintext risk is accepted and must remain honestly documented.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 - OpenRouter remains design-only and explicitly deferred; implementation requires a later, explicit user authorization.
@@ -97,6 +97,16 @@ Persistence and character state
 - [done: minimum layer] Successful logins restore the last known room, with removed/unknown rooms falling back to the starting room. Disconnect saves before room removal, and a failed or lossy save leaves the previous database state intact while cleanup continues.
 - [security invariant] Admin privilege remains session-only and is deliberately absent from character JSON; never turn a gameplay save into an authentication or authorization source.
 - Still required here: periodic autosave, explicit migrations when version 2 is introduced, more item templates as real content lands, and eventual structured status/quest/relationship fields when those systems actually exist.
+
+Connection and session runtime
+
+- [done: selector layer] `selectors.DefaultSelector` owns the listener, accept/read/write readiness, pre-auth line delivery, idle checks, and per-connection output queues. Unauthenticated sockets no longer create threads.
+- [done: understandable gameplay layer] `Session.send`, `prompt`, `read_line`, `move`, `handle_command`, and `disconnect` retain their sequential API. Exactly one daemon gameplay worker is started only after a player is authenticated and inserted into the active-session table.
+- [done: bounded authentication] Password hashing and login database work run in a two-worker pool with at most sixteen pending jobs. Completion returns to the selector thread before a connection changes authentication state.
+- [done: resource policy] Limits are 64 total connections, 32 pre-auth connections, 32 authenticated players, 8 connections per source IP, 64 queued authenticated input lines, and 256 KiB queued output per connection. Overflow disconnects instead of growing memory indefinitely.
+- [done: abuse/idle policy] Five failures for one IP/account pair within five minutes block that pair; one IP may claim three validated account creations per hour. Pre-auth idle timeout is 120 seconds. Authenticated users receive BEL at ten idle hours and are saved/disconnected at twelve; any received input resets the idle timer.
+- [done: deployment configuration] `BLINGMUD_HOST` and `BLINGMUD_PORT` configure the listener, retain `0.0.0.0:4000` defaults, and fail startup on malformed values.
+- [next parser layer] The selector currently provides bounded transitional line handling. The next stage must replace it with one incremental UTF-8/Telnet parser covering fragmented negotiation, escaped IAC, subnegotiation, CR-LF/CR-NUL, Unicode-aware backspace, and Tab completion events.
 
 Admin and operational tooling
 
@@ -474,7 +484,7 @@ Test plan
 
 Assumptions
 
-- Keep the current threaded telnet server model for now; do not introduce a separate AI microservice unless the in-process OpenRouter client proves too awkward.
+- Keep the current hybrid model: selector-owned network I/O and pre-auth state, bounded authentication workers, and one sequential gameplay thread per authenticated player. Do not introduce an asyncio/framework rewrite or a separate AI microservice unless a later explicit design change justifies it.
 - Default to keeping the current Town Square as the entry point initially, then connect the new village hub into it as part of the content rollout.
 - Keep using SQLite for persistence.
 - Keep the current codebase’s existing rooms and NPCs as regression fixtures while the new system lands.
@@ -750,8 +760,10 @@ Handoff guidance for future sessions
 What exists vs what is still planned
 
 - Existing today:
-  - threaded telnet server
-  - basic login / character creation flow
+  - selector-owned Telnet sockets, pre-auth input/timeouts, and bounded queued output
+  - a bounded two-worker authentication pool and selector-driven login/character creation state machine
+  - one sequential gameplay worker per authenticated player, preserving the simple `Session` API
+  - hard total/pre-auth/authenticated/per-IP connection limits, login/account-creation rate limits, and pre-auth plus 10h/12h authenticated idle policy
   - SQLite user table with serialized state
   - salted PBKDF2-SHA256 password hashes with successful-login migration from the legacy unsalted format
   - room objects with exits, items, players, and NPC lists
@@ -772,6 +784,7 @@ What exists vs what is still planned
   - simple item/equipment model
   - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
+  - the complete incremental Telnet/UTF-8 parser and Tab completion events
   - persistence autosave, future version migrations, and schemas for general status effects, quests, relationships, custom drinks, and durable world ecology
   - bounded isolation for a trusted NPC callback that never returns
   - OpenRouter integration and LLM failover, deferred until explicitly re-authorized by the user
@@ -780,7 +793,7 @@ What exists vs what is still planned
   - the remaining email-driven village content, including Corbel's acorn economy, Val's food/prices/regular memory and richer horn output, remaining Wisp reactions, and durable shared world state
   - structured room/NPC event schemas
   - content data loading / world authoring layer
-  - encrypted client transport or a secure front end for authentication outside trusted networks
+  - no in-repository TLS work: plaintext Telnet remains an explicitly accepted residual risk that operators must control and warnings must describe honestly
 
 - Future agents must update this section every time they complete or partially complete one of the planned systems above.
 - Do not leave this section stale: if a future run changes persistence, NPC architecture, or village content, it must be reflected here before handing work off again.

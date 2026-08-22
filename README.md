@@ -18,9 +18,13 @@ The only time we'll accept a PR from someone who's got the typical "antiwoke" at
 
 ## Boring technical stuff
 
-Implemented in python 3.0, no real attempt at heavy optimization at least for now - it's meant for small communities of people who want a silly fun thing.
+Implemented for Python 3.11 and newer, while deliberately keeping an old-school, plain coding style. There is no real attempt at huge-scale optimization: it is meant for small communities who want a silly fun thing.
 
-Every user session is a thread because that makes it easy to follow the logic - obviously this could be replaced with a cool async thing, but that's messier a lot of the time so won't be bothering at least at first.
+One selector owns listening, socket reads, socket writes, login input, timeouts, and bounded output queues. Unauthenticated connections do not receive a thread. Password hashing and login database work use a two-worker bounded pool; after authentication, each player receives one straightforward sequential gameplay thread. `Session.send()`, `prompt()`, and `read_line()` keep the easy-to-follow gameplay model without letting idle login sockets create unlimited threads.
+
+Runtime limits are intentionally modest: 64 total connections, 32 login connections, 32 authenticated players, 8 connections per source address, a 120-second login idle timeout, and a 256 KiB output queue per connection. Five failed logins for one address/account pair within five minutes are blocked, and one address may create at most three accounts per hour. Authenticated players receive an audible warning after ten idle hours and are saved and disconnected after twelve.
+
+The listener defaults to `0.0.0.0:4000`. Operators may set `BLINGMUD_HOST` and `BLINGMUD_PORT`; invalid values stop startup instead of silently choosing another address.
 
 The goal is to scale to groups of 10-20 active users at most and again to make it fun.
 

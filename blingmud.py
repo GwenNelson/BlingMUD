@@ -2,9 +2,10 @@
 #
 # BLINGMUD
 #
-# Deliberately simple threaded Telnet MUD server.
-# Compatible with Python 3.0-era syntax: no f-strings, dataclasses,
-# asyncio, type annotations, or other modern frippery.
+# Deliberately simple sequential-session Telnet MUD server.
+# Runtime baseline: Python 3.11 or newer.  The code deliberately retains a
+# plain Python 3.0-era style: no f-strings, dataclasses, asyncio, type-heavy
+# architecture, or other modern frippery in the gameplay path.
 #
 
 
@@ -14,10 +15,11 @@ import random
 import sqlite3
 import hashlib
 import hmac
-import socketserver
 import sys
 import threading
 import traceback
+
+from server_runtime import SelectorMudServer
 
 from player_state import (
     MAX_PLAYER_STATE_BYTES,
@@ -458,7 +460,8 @@ class WorshipCommand(Command):
 class Session(object):
     """One connected Telnet user.
 
-    Each instance is run by one server-created thread.
+    Authenticated gameplay for each instance is run by one sequential worker.
+    Network reads and writes may be owned by the selector runtime.
     """
 
     def __init__(self, request, address, world):
@@ -477,6 +480,8 @@ class Session(object):
         self.input_active = False
         self.input_hidden = False
         self.login_room = None
+        self.gameplay_thread = None
+        self.gameplay_thread_lock = threading.RLock()
 
     def enable_character_mode(self):
         """Ask a real Telnet client to use server-side character input."""
@@ -500,6 +505,26 @@ class Session(object):
             "BlingMUD suppresses password echo, but a client may still "
             "display typed characters."
         )
+
+    def send_login_banner(self):
+        self.send("")
+        self.send(colour("Welcome to BlingMUD", Colour.TITLE))
+        self.send("")
+        self.send(
+            "Type {0} if you're new. Use all caps. This is a separate "
+            "service from IRC or anything else hosted by the admins.".format(
+                colour("NEWUSER", Colour.BRIGHT_WHITE)
+            )
+        )
+        self.send(
+            "You need a separate BlingMUD account if you have never used "
+            "this service before."
+        )
+        self.send("")
+        self.send("BlingMUD is in heavy development right now!")
+        self.send("")
+        self.send_transport_warning()
+        self.send("")
 
     def _consume_telnet_command(self):
         """Consume one Telnet command after an IAC byte."""
@@ -568,7 +593,7 @@ class Session(object):
         except Exception:
             self.running = False
 
-    def prompt(self, text):
+    def prompt(self, text, hidden=False, maximum_length=MAX_INPUT_LENGTH):
         """Display a prompt and begin tracking the player's input line."""
         if not self.running:
             return
@@ -580,9 +605,18 @@ class Session(object):
                 self.prompt_text = text
                 self.current_input = ""
                 self.input_active = True
-                self.input_hidden = False
+                self.input_hidden = bool(hidden)
 
                 self.request.sendall(data)
+
+                configure_input = getattr(
+                    self.request,
+                    "configure_input",
+                    None
+                )
+
+                if configure_input is not None:
+                    configure_input(hidden, maximum_length)
 
         except Exception:
             self.running = False
@@ -614,6 +648,28 @@ class Session(object):
 
     def read_line(self, hidden=False, maximum_length=MAX_INPUT_LENGTH):
         """Read and edit one line using server-side character echo."""
+
+        queued_reader = getattr(self.request, "read_line", None)
+
+        if queued_reader is not None:
+            with self.send_lock:
+                self.current_input = ""
+                self.input_active = True
+                self.input_hidden = hidden
+
+            line = queued_reader(hidden, maximum_length)
+
+            with self.send_lock:
+                self.current_input = ""
+                self.prompt_text = ""
+                self.input_active = False
+                self.input_hidden = False
+
+            if line is None:
+                self.running = False
+                return None
+
+            return line.strip()
 
         characters = []
 
@@ -716,17 +772,7 @@ class Session(object):
 
 
     def login(self):
-        self.send("")
-        self.send(colour("Welcome to BlingMUD",Colour.TITLE))
-        self.send("")
-        self.send("Type %s if you're new. Use all caps. Note that this a seperate service from IRC or whatever else is hosted by the admins" % colour("NEWUSER",Colour.BRIGHT_WHITE))
-        self.send("You will need to setup a new account if you've never used BlingMUD before")
-        self.send("")
-        self.send("BlingMUD is in heavy development right now - watch this space for updates!")
-        self.send("")
-        self.send("")
-        self.send_transport_warning()
-        self.send("")
+        self.send_login_banner()
 
         while self.running:
             self.prompt("Name: ")
@@ -977,44 +1023,82 @@ class Session(object):
         )
 
 
+    def start_gameplay_worker(self):
+        """Start exactly one sequential worker after authentication."""
+        with self.gameplay_thread_lock:
+            if self.gameplay_thread is not None:
+                return False
+
+            player_name = "unknown"
+
+            if self.player is not None:
+                player_name = self.player.name.lower()
+
+            worker = threading.Thread(
+                target=self.run_authenticated,
+                name="blingmud-player-{0}".format(player_name),
+                daemon=True
+            )
+            self.gameplay_thread = worker
+            worker.start()
+        return True
+
     def run(self):
+        """Compatibility entry point for a directly-owned blocking socket."""
         self.enable_character_mode()
 
         try:
             if not self.login():
                 return
 
-            self.send("")
-            self.send("Welcome, {0}.".format(self.player.name))
-            self.send("Ordinary text is spoken aloud.")
-            self.send("Commands begin with a slash. Try /help.")
-            self.send("More importantly, try /bling.")
-            self.send("")
-
-            entry_room = self.login_room or self.world.starting_room
-            entry_room.enter(self.player)
-            entry_room.describe_to(self.player)
-
-            while self.running:
-                self.prompt("> ")
-                line = self.read_line()
-
-                if line is None:
-                    break
-
-                if not line:
-                    continue
-
-                if line.startswith("/"):
-                    self.handle_command(line)
-                else:
-                    self.handle_chat(line)
+            self._gameplay_loop()
 
         except Exception:
             traceback.print_exc()
 
         finally:
             self.disconnect()
+
+    def run_authenticated(self):
+        """Run gameplay after selector-driven authentication completes."""
+        try:
+            self._gameplay_loop()
+
+        except Exception:
+            traceback.print_exc()
+
+        finally:
+            self.disconnect()
+
+    def _gameplay_loop(self):
+        if self.player is None:
+            return
+
+        self.send("")
+        self.send("Welcome, {0}.".format(self.player.name))
+        self.send("Ordinary text is spoken aloud.")
+        self.send("Commands begin with a slash. Try /help.")
+        self.send("More importantly, try /bling.")
+        self.send("")
+
+        entry_room = self.login_room or self.world.starting_room
+        entry_room.enter(self.player)
+        entry_room.describe_to(self.player)
+
+        while self.running:
+            self.prompt("> ")
+            line = self.read_line()
+
+            if line is None:
+                break
+
+            if not line:
+                continue
+
+            if line.startswith("/"):
+                self.handle_command(line)
+            else:
+                self.handle_chat(line)
 
     def disconnect(self):
         if not self.running and self.player is None:
@@ -1133,29 +1217,502 @@ def valid_username(name):
     return True
 
 
-class MudRequestHandler(socketserver.BaseRequestHandler):
-    def handle(self):
-        session = Session(
-            self.request,
-            self.client_address,
-            WORLD
+def configured_server_address(environ=None):
+    """Return the validated listener configured through the environment."""
+    if environ is None:
+        environ = os.environ
+
+    host_value = environ.get("BLINGMUD_HOST", HOST)
+    port_value = environ.get("BLINGMUD_PORT", str(PORT))
+
+    if not isinstance(host_value, str) or not isinstance(port_value, str):
+        raise ValueError("listener configuration must be text")
+
+    host = host_value.strip()
+    port_text = port_value.strip()
+
+    if not host or len(host) > 255 or "\x00" in host:
+        raise ValueError("BLINGMUD_HOST is invalid")
+
+    try:
+        port = int(port_text)
+    except (TypeError, ValueError):
+        raise ValueError("BLINGMUD_PORT must be an integer")
+
+    if port < 1 or port > 65535:
+        raise ValueError("BLINGMUD_PORT must be between 1 and 65535")
+
+    return host, port
+
+
+def _load_account_for_authentication(name):
+    with USERS_LOCK:
+        return load_user(name)
+
+
+def _authenticate_account(account, password, world):
+    if not verify_password(password, account["password"]):
+        return {"authenticated": False}
+
+    if password_hash_needs_upgrade(account["password"]):
+        try:
+            upgraded_hash = password_hash(password)
+
+            with USERS_LOCK:
+                update_user_password_hash(account["username"], upgraded_hash)
+        except (OSError, sqlite3.Error, ValueError) as error:
+            sys.stderr.write(
+                "Could not upgrade password hash for {0}: {1}\n".format(
+                    account["username"],
+                    error
+                )
+            )
+
+    player = Player(account["username"])
+    invalid_state = False
+
+    try:
+        login_room = restore_player_state(
+            player,
+            account["state_json"],
+            world
         )
-        session.run()
+    except PlayerStateError:
+        sys.stderr.write(
+            "Invalid saved state for {0}; using safe defaults.\n".format(
+                account["username"]
+            )
+        )
+        invalid_state = True
+        login_room = world.starting_room
+
+    return {
+        "authenticated": True,
+        "player": player,
+        "login_room": login_room,
+        "invalid_state": invalid_state
+    }
 
 
-class ThreadedMudServer(
-    socketserver.ThreadingMixIn,
-    socketserver.TCPServer
-):
-    allow_reuse_address = True
+def _new_name_is_available(name):
+    with USERS_LOCK:
+        return not user_exists(name)
 
-    # Client threads will not prevent server shutdown.
-    daemon_threads = True
+
+def _create_account_for_authentication(name, password):
+    with USERS_LOCK:
+        if user_exists(name):
+            return False
+
+        try:
+            create_user(name, password)
+        except sqlite3.IntegrityError:
+            return False
+
+    return True
+
+
+class PreAuthController(object):
+    """Line-oriented pre-login state machine owned by the selector."""
+
+    STATE_NAME = "name"
+    STATE_PASSWORD = "password"
+    STATE_NEW_NAME = "new_name"
+    STATE_NEW_PASSWORD = "new_password"
+    STATE_CONFIRM_PASSWORD = "confirm_password"
+
+    def __init__(self, server, connection, session):
+        self.server = server
+        self.connection = connection
+        self.session = session
+        self.state = self.STATE_NAME
+        self.busy = False
+        self.account = None
+        self.requested_name = None
+        self.new_name = None
+        self.new_password = None
+
+    def connection_closed(self):
+        """Discard authentication-only secrets when the socket closes."""
+        self.account = None
+        self.requested_name = None
+        self.new_name = None
+        self.new_password = None
+
+    def start(self):
+        self.connection.attach_session(self.session)
+        self.connection.set_line_handler(self.on_line)
+        self.session.enable_character_mode()
+        self.session.send_login_banner()
+        self._prompt_name()
+
+    def _prompt(self, text, hidden=False, maximum_length=MAX_INPUT_LENGTH):
+        self.session.prompt(
+            text,
+            hidden=hidden,
+            maximum_length=maximum_length
+        )
+
+    def _prompt_name(self):
+        self.state = self.STATE_NAME
+        self.account = None
+        self._prompt("Name: ", maximum_length=MAX_USERNAME_INPUT_LENGTH)
+
+    def _prompt_new_name(self):
+        self.state = self.STATE_NEW_NAME
+        self._prompt(
+            "Choose a name: ",
+            maximum_length=MAX_USERNAME_INPUT_LENGTH
+        )
+
+    def _prompt_password(self):
+        self.state = self.STATE_PASSWORD
+        self._prompt(
+            "Password: ",
+            hidden=True,
+            maximum_length=MAX_PASSWORD_LENGTH + 1
+        )
+
+    def _prompt_new_password(self):
+        self.state = self.STATE_NEW_PASSWORD
+        self._prompt(
+            "Choose a password: ",
+            hidden=True,
+            maximum_length=MAX_PASSWORD_LENGTH + 1
+        )
+
+    def _prompt_confirmation(self):
+        self.state = self.STATE_CONFIRM_PASSWORD
+        self._prompt(
+            "Confirm password: ",
+            hidden=True,
+            maximum_length=MAX_PASSWORD_LENGTH + 1
+        )
+
+    def _submit(self, function, callback, *arguments):
+        if self.busy or self.connection.closed:
+            return False
+
+        self.busy = True
+        self.connection.configure_input(False, 0)
+
+        def completed(result, error):
+            self.busy = False
+
+            if self.connection.closed:
+                return
+
+            callback(result, error)
+
+        if self.server.auth_pool.submit(
+            function,
+            completed,
+            *arguments
+        ):
+            return True
+
+        self.busy = False
+        self.session.send(
+            "The login workers are busy. Please try that line again."
+        )
+        self._repeat_prompt()
+        return False
+
+    def _repeat_prompt(self):
+        if self.state == self.STATE_PASSWORD:
+            self._prompt_password()
+        elif self.state == self.STATE_NEW_NAME:
+            self._prompt_new_name()
+        elif self.state == self.STATE_NEW_PASSWORD:
+            self._prompt_new_password()
+        elif self.state == self.STATE_CONFIRM_PASSWORD:
+            self._prompt_confirmation()
+        else:
+            self._prompt_name()
+
+    def on_line(self, line):
+        if self.busy or self.connection.closed:
+            return
+
+        if self.state == self.STATE_NAME:
+            self._handle_name(line)
+        elif self.state == self.STATE_PASSWORD:
+            self._handle_password(line)
+        elif self.state == self.STATE_NEW_NAME:
+            self._handle_new_name(line)
+        elif self.state == self.STATE_NEW_PASSWORD:
+            self._handle_new_password(line)
+        elif self.state == self.STATE_CONFIRM_PASSWORD:
+            self._handle_confirmation(line)
+
+    def _handle_name(self, line):
+        name = line.strip()
+
+        if not name:
+            self._prompt_name()
+            return
+
+        if name.lower() == "newuser":
+            self.session.send("")
+            self.session.send("Creating a new BlingMUD user.")
+            self._prompt_new_name()
+            return
+
+        if not self.server.rate_limiter.authentication_allowed(
+            self.connection.ip_address,
+            name
+        ):
+            self.session.send(
+                "Too many failed logins for that account from this address. "
+                "Please wait five minutes."
+            )
+            self.connection.request_close_after_output()
+            return
+
+        self.requested_name = name
+        self._submit(
+            _load_account_for_authentication,
+            self._account_loaded,
+            name
+        )
+
+    def _account_loaded(self, account, error):
+        if error is not None:
+            self.session.send("Login storage is temporarily unavailable.")
+            self._prompt_name()
+            return
+
+        if account is None:
+            self.session.send("No such user. Type NEWUSER to create one.")
+            attempts = self.server.rate_limiter.record_authentication_failure(
+                self.connection.ip_address,
+                self.requested_name
+            )
+
+            if attempts >= 5:
+                self.session.send(
+                    "Too many failed logins. This connection is being closed."
+                )
+                self.connection.request_close_after_output()
+            else:
+                self._prompt_name()
+            return
+
+        self.account = account
+        self._prompt_password()
+
+    def _handle_password(self, password):
+        if self.account is None:
+            self._prompt_name()
+            return
+
+        if len(password) > MAX_PASSWORD_LENGTH:
+            self.session.send("That password is too long.")
+            self._record_failed_login()
+            return
+
+        self._submit(
+            _authenticate_account,
+            self._authentication_finished,
+            self.account,
+            password,
+            self.session.world
+        )
+
+    def _record_failed_login(self):
+        attempts = self.server.rate_limiter.record_authentication_failure(
+            self.connection.ip_address,
+            self.account["username"]
+        )
+
+        if attempts >= 5:
+            self.session.send(
+                "Too many failed logins. This connection is being closed."
+            )
+            self.connection.request_close_after_output()
+        else:
+            self._prompt_password()
+
+    def _authentication_finished(self, result, error):
+        if error is not None:
+            self.session.send("Login verification is temporarily unavailable.")
+            self._prompt_password()
+            return
+
+        if not result["authenticated"]:
+            self.session.send("Incorrect password.")
+            self._record_failed_login()
+            return
+
+        self._finish_authenticated(
+            result["player"],
+            result["login_room"],
+            result["invalid_state"]
+        )
+
+    def _handle_new_name(self, line):
+        name = line.strip()
+
+        if not valid_username(name):
+            self.session.send(
+                "Names must be 2-20 characters and contain only letters, "
+                "numbers, underscores or hyphens."
+            )
+            self._prompt_new_name()
+            return
+
+        self.new_name = name
+        self._submit(
+            _new_name_is_available,
+            self._new_name_checked,
+            name
+        )
+
+    def _new_name_checked(self, available, error):
+        if error is not None:
+            self.session.send("Login storage is temporarily unavailable.")
+            self._prompt_new_name()
+            return
+
+        if not available:
+            self.session.send("That name is already registered.")
+            self._prompt_new_name()
+            return
+
+        self.session.send(
+            "DO NOT USE A PASSWORD YOU USE SOMEWHERE ELSE."
+        )
+        self._prompt_new_password()
+
+    def _handle_new_password(self, password):
+        if len(password) > MAX_PASSWORD_LENGTH:
+            self.session.send("That password is too long.")
+            self._prompt_new_password()
+            return
+
+        if len(password) < 12:
+            self.session.send("Please use at least twelve characters.")
+            self._prompt_new_password()
+            return
+
+        self.new_password = password
+        self._prompt_confirmation()
+
+    def _handle_confirmation(self, confirmation):
+        if len(confirmation) > MAX_PASSWORD_LENGTH:
+            self.new_password = None
+            self.session.send("That password confirmation is too long.")
+            self._prompt_new_password()
+            return
+
+        if self.new_password != confirmation:
+            self.new_password = None
+            self.session.send("The passwords did not match.")
+            self._prompt_new_password()
+            return
+
+        if not self.server.rate_limiter.claim_account_creation(
+            self.connection.ip_address
+        ):
+            self.new_password = None
+            self.session.send(
+                "Too many accounts have been created from this address "
+                "within the last hour."
+            )
+            self.connection.request_close_after_output()
+            return
+
+        password = self.new_password
+        self.new_password = None
+        self._submit(
+            _create_account_for_authentication,
+            self._account_created,
+            self.new_name,
+            password
+        )
+
+    def _account_created(self, created, error):
+        if error is not None:
+            self.server.rate_limiter.release_account_creation(
+                self.connection.ip_address
+            )
+            self.session.send("The account could not be created right now.")
+            self._prompt_new_name()
+            return
+
+        if not created:
+            self.server.rate_limiter.release_account_creation(
+                self.connection.ip_address
+            )
+            self.session.send(
+                "Someone registered that name while you were typing."
+            )
+            self._prompt_new_name()
+            return
+
+        player = Player(self.new_name)
+        self.session.send("Account created.")
+        self._finish_authenticated(
+            player,
+            self.session.world.starting_room,
+            False
+        )
+
+    def _finish_authenticated(self, player, login_room, invalid_state):
+        key = player.name.lower()
+
+        with SESSIONS_LOCK:
+            if key in SESSIONS:
+                self.session.send("That user is already connected.")
+                self._prompt_name()
+                return
+
+            if not self.server.promote_authenticated(self.connection):
+                self.session.send(
+                    "The authenticated-player limit has been reached."
+                )
+                self.connection.request_close_after_output()
+                return
+
+            self.session.player = player
+            self.session.login_room = login_room
+            player.session = self.session
+            SESSIONS[key] = self.session
+
+        if invalid_state:
+            self.session.send(
+                "Your saved character state was invalid, so this session "
+                "is starting from safe defaults."
+            )
+
+        self.server.rate_limiter.clear_authentication_failures(
+            self.connection.ip_address,
+            player.name
+        )
+        self.account = None
+        self.requested_name = None
+        self.new_name = None
+        self.connection.set_line_handler(None)
+        self.connection.configure_input(False, MAX_INPUT_LENGTH)
+        self.session.start_gameplay_worker()
+
+
+def begin_selector_connection(server, connection):
+    session = Session(connection, connection.address, WORLD)
+    controller = PreAuthController(server, connection, session)
+    connection.auth_controller = controller
+    controller.start()
 
 
 def main():
     global ADMIN_PASSWORD_HASH
     global NPC_MANAGER
+
+    try:
+        host, port = configured_server_address()
+    except ValueError as error:
+        sys.stderr.write("Configuration error: {0}\n".format(error))
+        return 2
 
     init_user_database()
 
@@ -1178,10 +1735,20 @@ def main():
     print("No TLS or encrypted transport is implemented by this server.")
     print("")
 
-    server = ThreadedMudServer((HOST, PORT), MudRequestHandler)
+    server = SelectorMudServer(
+        (host, port),
+        begin_selector_connection
+    )
 
-    print("BLINGMUD listening on {0}:{1}".format(HOST, PORT))
-    print("Connect with: telnet localhost {0}".format(PORT))
+    try:
+        server.bind()
+    except OSError as error:
+        server.server_close()
+        sys.stderr.write("Could not bind BlingMUD listener: {0}\n".format(error))
+        return 1
+
+    print("BLINGMUD listening on {0}:{1}".format(host, port))
+    print("Connect with: telnet localhost {0}".format(port))
     print("Press Ctrl-C to stop.")
 
     try:
@@ -1195,5 +1762,7 @@ def main():
         server.server_close()
         NPC_MANAGER.stop()
 
+    return 0
+
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
