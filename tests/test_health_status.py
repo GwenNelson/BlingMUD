@@ -73,6 +73,14 @@ class HealthAndStatusTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.player.heal(-1)
 
+        self.player.intoxication = 0
+        old_intoxication = self.player.intoxication
+
+        with self.assertRaises(ValueError):
+            self.player.add_intoxication(1, now=float("nan"))
+
+        self.assertEqual(self.player.intoxication, old_intoxication)
+
     def test_collapse_is_non_destructive_and_returns_to_town_square(self):
         keepsake = Item("keepsake", wearable=True, worn_where="Head")
         self.player.inventory.append(keepsake)

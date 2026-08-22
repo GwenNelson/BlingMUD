@@ -56,6 +56,7 @@ from world_state import (
 )
 
 USERS_DB = 'users.sqlite'
+DATABASE_SCHEMA_VERSION = 2
 HOST = "0.0.0.0"
 PORT = 4000
 
@@ -90,6 +91,35 @@ MAX_USERNAME_INPUT_LENGTH = 21
 
 TELOPT_ECHO = 1
 TELOPT_SGA = 3
+
+
+class DatabaseMigrationError(RuntimeError):
+    pass
+
+
+def _validate_database_schema(cursor):
+    expected_tables = {
+        "users": (
+            "username",
+            "username_lower",
+            "password_hash",
+            "json_state"
+        ),
+        "world_state": ("state_key", "json_state")
+    }
+
+    for table_name, expected_columns in expected_tables.items():
+        rows = cursor.execute(
+            "PRAGMA table_info({0})".format(table_name)
+        ).fetchall()
+        actual_columns = tuple(row[1] for row in rows)
+
+        if actual_columns != expected_columns:
+            raise DatabaseMigrationError(
+                "database table {0} does not match the supported schema".format(
+                    table_name
+                )
+            )
 TELOPT_LINEMODE = 34
 
 def password_hash(password):
@@ -201,31 +231,55 @@ def init_user_database():
 
     try:
         cursor = connection.cursor()
+        current_version = cursor.execute(
+            "PRAGMA user_version"
+        ).fetchone()[0]
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY,
-                username_lower TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                json_state TEXT NOT NULL
+        if current_version > DATABASE_SCHEMA_VERSION:
+            raise DatabaseMigrationError(
+                "database schema version {0} is newer than supported {1}".format(
+                    current_version,
+                    DATABASE_SCHEMA_VERSION
+                )
             )
-        """)
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS world_state (
-                state_key TEXT PRIMARY KEY,
-                json_state TEXT NOT NULL
+        cursor.execute("BEGIN IMMEDIATE")
+
+        if current_version < 1:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    username TEXT PRIMARY KEY,
+                    username_lower TEXT UNIQUE NOT NULL,
+                    password_hash TEXT NOT NULL,
+                    json_state TEXT NOT NULL
+                )
+            """)
+
+        if current_version < 2:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS world_state (
+                    state_key TEXT PRIMARY KEY,
+                    json_state TEXT NOT NULL
+                )
+            """)
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO world_state (state_key, json_state)
+                VALUES (?, ?)
+                """,
+                ("village", new_world_state_json())
             )
-        """)
+
+        _validate_database_schema(cursor)
         cursor.execute(
-            """
-            INSERT OR IGNORE INTO world_state (state_key, json_state)
-            VALUES (?, ?)
-            """,
-            ("village", new_world_state_json())
+            "PRAGMA user_version = {0}".format(DATABASE_SCHEMA_VERSION)
         )
 
         connection.commit()
+
+    except Exception:
+        connection.rollback()
+        raise
 
     finally:
         connection.close()
@@ -540,7 +594,8 @@ class Session(object):
         address,
         world,
         persistence_writer=None,
-        monotonic_source=None
+        monotonic_source=None,
+        wall_time_source=None
     ):
         self.request = request
         self.address = address
@@ -568,6 +623,7 @@ class Session(object):
         self.last_save_error = None
         self.input_parser = TelnetInputParser(MAX_INPUT_LENGTH)
         self.monotonic_source = monotonic_source or time.monotonic
+        self.wall_time_source = wall_time_source or time.time
         self.last_status_update = self.monotonic_source()
 
     def reset_status_clock(self):
@@ -606,6 +662,7 @@ class Session(object):
                 0,
                 old_intoxication - whole_minutes
             )
+            self.player.mark_status_updated(self.wall_time_source())
             return old_intoxication - self.player.intoxication
         finally:
             self.state_lock.release()
@@ -1247,6 +1304,7 @@ class Session(object):
         player.health = 1
         player.intoxication = 0
         player.recently_respawned = True
+        player.mark_status_updated(self.wall_time_source())
 
         self.send(
             "You collapse. The world goes sparkly around the edges, then "
@@ -2033,7 +2091,11 @@ def main():
         sys.stderr.write("Configuration error: {0}\n".format(error))
         return 2
 
-    init_user_database()
+    try:
+        init_user_database()
+    except (DatabaseMigrationError, sqlite3.Error) as error:
+        sys.stderr.write("Database initialization failed: {0}\n".format(error))
+        return 2
 
     stored_world_state = load_world_state()
     world_state_valid = True

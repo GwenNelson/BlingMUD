@@ -36,7 +36,8 @@ Known bugs / first fixes
 
 Core engine
 
-☒ Formalize current player save/load as bounded version-1 JSON with safe legacy-empty migration.
+☒ Formalize player save/load as bounded version-2 JSON with safe migrations from version 1 and legacy empty state.
+☒ Track transactional SQLite migrations with `PRAGMA user_version`, preserve existing rows, and reject databases newer than the runtime.
 ☒ Keep auth decisions out of gameplay state; in particular, never persist or restore session admin privilege.
 ☒ Warn prominently at startup and before authentication that Telnet is plaintext; suppress password echo and hidden-input redraw without claiming this protects network traffic.
 ☒ Record the accepted residual risk: the listener remains public by default and TLS is deliberately outside the current implementation plan, so operators must control network exposure.
@@ -112,7 +113,7 @@ Village content
 ☒ Centralize bounded damage/healing/intoxication changes; make falling acorns deal one damage and Val's cats deal five through the shared API.
 ☒ Add non-destructive zero-health collapse to Town Square, retaining carried/equipped items and fabulousness while clearing intoxication, restoring one health, and letting Val recognize a recent collapse.
 ☒ Decay online intoxication by one point per whole minute without blocking selector I/O or allowing backwards clocks to increase it.
-☐ Persist recent-collapse state and a bounded wall-clock status timestamp in character schema version 2 so intoxication can also decay safely while offline.
+☒ Persist recent-collapse state and a bounded wall-clock status timestamp in character schema version 2; decay intoxication safely across offline time without allowing backwards-clock increases.
 ☒ Add the initial Village Green and Hanging Tree canopy with `/up`/`/down`, day/night Wisp descriptions, both acorn harvest verbs, bounded giant-acorn supply, and a room-aware low-harvest bonking hazard.
 ☒ Persist bounded acorn supply/danger/harvest totals and Wisp ward/absence/harm state across restarts using strict version-1 world JSON and a one-key asynchronous writer.
 ☐ Make canopy supply renewable across time without enabling unbounded item creation.

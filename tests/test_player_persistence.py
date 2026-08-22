@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -18,6 +19,7 @@ from items.giant_acorn import GiantAcorn
 from items.pimp_hat import PimpHat
 from items.possum_token import RoyalPossumBottleCap
 from player_state import (
+    MAX_STATUS_TIMESTAMP,
     MAX_PLAYER_STATE_BYTES,
     PLAYER_STATE_VERSION,
     PlayerStateError,
@@ -79,6 +81,7 @@ class PlayerStateUnitTests(unittest.TestCase):
         player.max_health = 140
         player.health = 83
         player.intoxication = 46
+        player.recently_respawned = True
         player.is_admin = True
 
         encoded = serialize_player_state(player)
@@ -101,6 +104,7 @@ class PlayerStateUnitTests(unittest.TestCase):
         self.assertEqual(restored.max_health, 140)
         self.assertEqual(restored.health, 83)
         self.assertEqual(restored.intoxication, 46)
+        self.assertTrue(restored.recently_respawned)
         self.assertFalse(restored.is_admin)
 
     def test_legacy_empty_state_migrates_to_safe_defaults(self):
@@ -118,7 +122,7 @@ class PlayerStateUnitTests(unittest.TestCase):
 
     def test_older_version_one_stats_gain_safe_health_defaults(self):
         document = {
-            "version": PLAYER_STATE_VERSION,
+            "version": 1,
             "room_id": "other",
             "stats": {"fabulousness": 12},
             "inventory": [],
@@ -137,6 +141,85 @@ class PlayerStateUnitTests(unittest.TestCase):
         self.assertEqual(player.max_health, DEFAULT_MAX_HEALTH)
         self.assertEqual(player.health, DEFAULT_MAX_HEALTH)
         self.assertEqual(player.intoxication, 0)
+        self.assertFalse(player.recently_respawned)
+
+    def test_version_one_intoxication_migrates_without_fake_offline_decay(self):
+        document = {
+            "version": 1,
+            "room_id": "other",
+            "stats": {
+                "fabulousness": 0,
+                "max_health": 100,
+                "health": 90,
+                "intoxication": 12
+            },
+            "inventory": [],
+            "equipment": {}
+        }
+        player = Player("Migrating")
+        restore_player_state(
+            player,
+            json.dumps(document),
+            self.world,
+            time_source=lambda: 500.0
+        )
+        self.assertEqual(player.intoxication, 12)
+        self.assertFalse(player.recently_respawned)
+        self.assertEqual(player.last_status_update, 500.0)
+
+    def test_version_two_applies_bounded_offline_intoxication_decay(self):
+        document = json.loads(new_player_state_json(time_source=lambda: 100.0))
+        document["stats"]["intoxication"] = 10
+        document["status"]["recently_respawned"] = True
+        player = Player("Sleeper")
+        restore_player_state(
+            player,
+            json.dumps(document),
+            self.world,
+            time_source=lambda: 400.0
+        )
+        self.assertEqual(player.intoxication, 5)
+        self.assertTrue(player.recently_respawned)
+        self.assertEqual(player.last_status_update, 400.0)
+
+        document["status"]["last_status_update"] = 1000.0
+        document["stats"]["intoxication"] = 7
+        restore_player_state(
+            player,
+            json.dumps(document),
+            self.world,
+            time_source=lambda: 500.0
+        )
+        self.assertEqual(player.intoxication, 7)
+        self.assertEqual(player.last_status_update, 1000.0)
+
+    def test_invalid_version_two_status_is_rejected_atomically(self):
+        invalid_values = (True, -1, float("nan"), MAX_STATUS_TIMESTAMP + 1)
+
+        for invalid in invalid_values:
+            document = json.loads(new_player_state_json())
+            document["status"]["last_status_update"] = invalid
+            player = Player("UntouchedStatus")
+            player.recently_respawned = True
+
+            with self.assertRaises(PlayerStateError):
+                restore_player_state(
+                    player,
+                    json.dumps(document),
+                    self.world
+                )
+
+            self.assertTrue(player.recently_respawned)
+
+        document = json.loads(new_player_state_json())
+        document["status"]["recently_respawned"] = 1
+
+        with self.assertRaises(PlayerStateError):
+            restore_player_state(
+                Player("InvalidRecentFlag"),
+                json.dumps(document),
+                self.world
+            )
 
     def test_missing_room_falls_back_to_starting_room(self):
         document = json.loads(new_player_state_json())
@@ -246,6 +329,60 @@ class PlayerStateDatabaseTests(unittest.TestCase):
 
         self.assertEqual(document["version"], PLAYER_STATE_VERSION)
         self.assertEqual(document["inventory"], [])
+        self.assertIn("status", document)
+
+    def test_database_migrations_are_versioned_and_preserve_accounts(self):
+        blingmud.create_user("LegacyRow", "a sufficiently long password")
+        connection = sqlite3.connect(self.database_path)
+
+        try:
+            connection.execute("DROP TABLE world_state")
+            connection.execute("PRAGMA user_version = 0")
+            connection.commit()
+        finally:
+            connection.close()
+
+        blingmud.init_user_database()
+        self.assertIsNotNone(blingmud.load_user("LegacyRow"))
+        self.assertIsNotNone(blingmud.load_world_state())
+        connection = sqlite3.connect(self.database_path)
+
+        try:
+            version = connection.execute(
+                "PRAGMA user_version"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+
+        self.assertEqual(version, blingmud.DATABASE_SCHEMA_VERSION)
+
+    def test_database_newer_than_runtime_is_rejected(self):
+        connection = sqlite3.connect(self.database_path)
+
+        try:
+            connection.execute(
+                "PRAGMA user_version = {0}".format(
+                    blingmud.DATABASE_SCHEMA_VERSION + 1
+                )
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(blingmud.DatabaseMigrationError):
+            blingmud.init_user_database()
+
+    def test_claimed_current_but_incomplete_database_is_rejected(self):
+        connection = sqlite3.connect(self.database_path)
+
+        try:
+            connection.execute("DROP TABLE world_state")
+            connection.commit()
+        finally:
+            connection.close()
+
+        with self.assertRaises(blingmud.DatabaseMigrationError):
+            blingmud.init_user_database()
 
     def test_login_restores_room_inventory_equipment_and_stats(self):
         password = "another sufficiently long password"

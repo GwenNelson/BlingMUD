@@ -1,9 +1,12 @@
 import json
+import math
+import time
 
 from core import (
     DEFAULT_MAX_HEALTH,
     MAX_HEALTH,
     MAX_INTOXICATION,
+    MAX_STATUS_TIMESTAMP,
     PLAYER_INVENTORY_LIMIT
 )
 from items.pimp_hat import PimpHat
@@ -12,7 +15,7 @@ from items.giant_acorn import GiantAcorn
 from items.drinks import HornBornSpecial, ValHealingPotion, ValkyrieMead
 
 
-PLAYER_STATE_VERSION = 1
+PLAYER_STATE_VERSION = 2
 MAX_PLAYER_STATE_BYTES = 65536
 MAX_INVENTORY_ITEMS = PLAYER_INVENTORY_LIMIT
 MAX_EQUIPMENT_SLOTS = 32
@@ -42,7 +45,12 @@ class PlayerStateError(ValueError):
     """Raised when character state cannot be safely saved or restored."""
 
 
-def _default_document():
+def _current_timestamp(time_source=None):
+    source = time_source or time.time
+    return _validated_timestamp("status update timestamp", source())
+
+
+def _default_document(time_source=None):
     return {
         "version": PLAYER_STATE_VERSION,
         "room_id": None,
@@ -53,12 +61,16 @@ def _default_document():
             "intoxication": 0
         },
         "inventory": [],
-        "equipment": {}
+        "equipment": {},
+        "status": {
+            "recently_respawned": False,
+            "last_status_update": _current_timestamp(time_source)
+        }
     }
 
 
-def new_player_state_json():
-    return _encode_document(_default_document())
+def new_player_state_json(time_source=None):
+    return _encode_document(_default_document(time_source))
 
 
 def _encode_document(document):
@@ -110,6 +122,19 @@ def _validated_integer(name, value, minimum, maximum):
     return value
 
 
+def _validated_timestamp(name, value):
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0
+        or value > MAX_STATUS_TIMESTAMP
+    ):
+        raise PlayerStateError("{0} is invalid".format(name))
+
+    return float(value)
+
+
 def serialize_player_state(player):
     inventory = []
     inventory_indexes = {}
@@ -130,6 +155,15 @@ def serialize_player_state(player):
         player.intoxication,
         0,
         MAX_INTOXICATION
+    )
+    recently_respawned = player.recently_respawned
+
+    if not isinstance(recently_respawned, bool):
+        raise PlayerStateError("recent respawn state must be true or false")
+
+    last_status_update = _validated_timestamp(
+        "status update timestamp",
+        player.last_status_update
     )
 
     if len(player.inventory) > MAX_INVENTORY_ITEMS:
@@ -179,13 +213,44 @@ def serialize_player_state(player):
             "intoxication": intoxication
         },
         "inventory": inventory,
-        "equipment": equipment
+        "equipment": equipment,
+        "status": {
+            "recently_respawned": recently_respawned,
+            "last_status_update": last_status_update
+        }
     }
 
     return _encode_document(document)
 
 
-def _decode_document(encoded_state):
+def _migrate_version_one(document, now):
+    stats = document.get("stats")
+
+    if isinstance(stats, dict):
+        stats = {
+            "fabulousness": stats.get("fabulousness"),
+            "max_health": stats.get("max_health", DEFAULT_MAX_HEALTH),
+            "health": stats.get(
+                "health",
+                stats.get("max_health", DEFAULT_MAX_HEALTH)
+            ),
+            "intoxication": stats.get("intoxication", 0)
+        }
+
+    return {
+        "version": PLAYER_STATE_VERSION,
+        "room_id": document.get("room_id"),
+        "stats": stats,
+        "inventory": document.get("inventory"),
+        "equipment": document.get("equipment"),
+        "status": {
+            "recently_respawned": False,
+            "last_status_update": now
+        }
+    }
+
+
+def _decode_document(encoded_state, time_source=None):
     if not isinstance(encoded_state, str):
         raise PlayerStateError("player state must be JSON text")
 
@@ -197,32 +262,54 @@ def _decode_document(encoded_state):
         raise PlayerStateError("player state contains invalid JSON")
 
     if document == {}:
-        return _default_document()
+        return _default_document(time_source)
 
     if not isinstance(document, dict):
         raise PlayerStateError("player state must be an object")
 
     version = document.get("version")
 
-    if (
-        isinstance(version, bool)
-        or not isinstance(version, int)
-        or version != PLAYER_STATE_VERSION
-    ):
+    if isinstance(version, bool) or not isinstance(version, int):
         raise PlayerStateError("unsupported player state version")
+
+    now = _current_timestamp(time_source)
+
+    if version == 1:
+        document = _migrate_version_one(document, now)
+    elif version != PLAYER_STATE_VERSION:
+        raise PlayerStateError("unsupported player state version")
+
+    if set(document) != set((
+        "version",
+        "room_id",
+        "stats",
+        "inventory",
+        "equipment",
+        "status"
+    )):
+        raise PlayerStateError("player state has unknown or missing fields")
 
     return document
 
 
-def restore_player_state(player, encoded_state, world):
-    document = _decode_document(encoded_state)
+def restore_player_state(player, encoded_state, world, time_source=None):
+    document = _decode_document(encoded_state, time_source=time_source)
     stats = document.get("stats")
     inventory_data = document.get("inventory")
     equipment_data = document.get("equipment")
     room_id = document.get("room_id")
+    status = document.get("status")
 
     if not isinstance(stats, dict):
         raise PlayerStateError("player stats must be an object")
+
+    if set(stats) != set((
+        "fabulousness",
+        "max_health",
+        "health",
+        "intoxication"
+    )):
+        raise PlayerStateError("player stats have unknown or missing fields")
 
     fabulousness = _validated_fabulousness(stats.get("fabulousness"))
     max_health = _validated_integer(
@@ -243,6 +330,26 @@ def restore_player_state(player, encoded_state, world):
         0,
         MAX_INTOXICATION
     )
+
+    if not isinstance(status, dict) or set(status) != set((
+        "recently_respawned",
+        "last_status_update"
+    )):
+        raise PlayerStateError("player status has unknown or missing fields")
+
+    recently_respawned = status["recently_respawned"]
+
+    if not isinstance(recently_respawned, bool):
+        raise PlayerStateError("recent respawn state must be true or false")
+
+    last_status_update = _validated_timestamp(
+        "status update timestamp",
+        status["last_status_update"]
+    )
+    now = _current_timestamp(time_source)
+    elapsed_seconds = max(0.0, now - last_status_update)
+    intoxication = max(0, intoxication - int(elapsed_seconds // 60.0))
+    current_status_update = max(last_status_update, now)
 
     if not isinstance(inventory_data, list):
         raise PlayerStateError("player inventory must be a list")
@@ -305,5 +412,7 @@ def restore_player_state(player, encoded_state, world):
     player.max_health = max_health
     player.health = health
     player.intoxication = intoxication
+    player.recently_respawned = recently_respawned
+    player.last_status_update = current_status_update
 
     return room

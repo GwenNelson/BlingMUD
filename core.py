@@ -13,6 +13,7 @@ ROOM_ITEM_LIMIT = 100
 DEFAULT_MAX_HEALTH = 100
 MAX_HEALTH = 10000
 MAX_INTOXICATION = 100
+MAX_STATUS_TIMESTAMP = 32503680000.0
 RESERVED_GLOBAL_COMMANDS = frozenset((
     "admin",
     "shutdown",
@@ -337,6 +338,7 @@ class Player(Entity):
         self.health = self.max_health
         self.intoxication = 0
         self.recently_respawned = False
+        self.last_status_update = time.time()
 
     @staticmethod
     def _bounded_change(value, label):
@@ -367,12 +369,40 @@ class Player(Entity):
         self.health = min(self.max_health, self.health + amount)
         return self.health - old_health
 
-    def add_intoxication(self, amount):
+    def add_intoxication(self, amount, now=None):
         """Apply a bounded intoxication increase and return the real change."""
         amount = self._bounded_change(amount, "intoxication")
         old_intoxication = self.intoxication
-        self.intoxication = min(MAX_INTOXICATION, old_intoxication + amount)
-        return self.intoxication - old_intoxication
+        new_intoxication = min(
+            MAX_INTOXICATION,
+            old_intoxication + amount
+        )
+        gained = new_intoxication - old_intoxication
+
+        if gained > 0:
+            self.mark_status_updated(now)
+
+        self.intoxication = new_intoxication
+        return gained
+
+    def mark_status_updated(self, now=None):
+        if now is None:
+            now = time.time()
+
+        if (
+            isinstance(now, bool)
+            or not isinstance(now, (int, float))
+            or not math.isfinite(now)
+            or now < 0
+            or now > MAX_STATUS_TIMESTAMP
+        ):
+            raise ValueError("status timestamp is invalid")
+
+        self.last_status_update = max(
+            self.last_status_update,
+            float(now)
+        )
+        return self.last_status_update
 
     def inventory_is_full(self):
         return len(self.inventory) >= PLAYER_INVENTORY_LIMIT
