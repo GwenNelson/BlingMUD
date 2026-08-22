@@ -18,6 +18,7 @@ import hmac
 import sys
 import threading
 import traceback
+import unicodedata
 
 from server_runtime import SelectorMudServer
 from persistence_runtime import (
@@ -469,6 +470,27 @@ def active_sessions_snapshot():
     with SESSIONS_LOCK:
         return list(SESSIONS.values())
 
+
+def find_active_session(player_name):
+    if not isinstance(player_name, str):
+        return None
+
+    with SESSIONS_LOCK:
+        return SESSIONS.get(player_name.lower())
+
+
+def validated_admin_text(value, label="reason", maximum=200):
+    text = value.strip()
+
+    if len(text) > maximum:
+        raise ValueError("{0} is too long".format(label))
+
+    for character in text:
+        if unicodedata.category(character) in ("Cc", "Cf", "Cs"):
+            raise ValueError("{0} contains unsafe controls".format(label))
+
+    return text
+
 from core import *
 
 from rooms.fabulous_chamber import FabulousChamber
@@ -519,6 +541,331 @@ class AdminCommand(Command):
            session.send("Reality bends to your will")
         else:
            session.send("Be gone! That is not the magic word!")
+
+
+@register_command
+class ShutdownCommand(Command):
+    name = "shutdown"
+    aliases = ()
+    usage = "/shutdown now [reason]"
+    summary = "Gracefully save and stop BlingMUD. Requires 'now'."
+    admin_only = True
+
+    def execute(self, session, arguments):
+        pieces = arguments.split(None, 1)
+
+        if not pieces or pieces[0].lower() != "now":
+            session.send("Use /shutdown now [reason] to confirm.")
+            return
+
+        try:
+            reason = validated_admin_text(
+                pieces[1] if len(pieces) == 2 else ""
+            )
+        except ValueError as error:
+            session.send(str(error).capitalize() + ".")
+            return
+
+        server = session.server_control
+
+        if server is None or not hasattr(server, "request_graceful_shutdown"):
+            session.send("Graceful server shutdown is unavailable here.")
+            return
+
+        message = "* BlingMUD shutdown requested by {0}.".format(
+            session.player.name
+        )
+
+        if reason:
+            message += " Reason: {0}".format(reason)
+
+        for active_session in active_sessions_snapshot():
+            active_session.send(message)
+
+        server.request_graceful_shutdown(1.0)
+
+
+@register_command
+class KickCommand(Command):
+    name = "kick"
+    aliases = ()
+    usage = "/kick <player> [reason]"
+    summary = "Save and disconnect one online player."
+    admin_only = True
+
+    def execute(self, session, arguments):
+        pieces = arguments.split(None, 1)
+
+        if not pieces:
+            session.send("Kick whom?")
+            return
+
+        target = find_active_session(pieces[0])
+
+        if target is None or target.player is None:
+            session.send("That player is not online.")
+            return
+
+        if target is session:
+            session.send("Use /quit if you intend to disconnect yourself.")
+            return
+
+        try:
+            reason = validated_admin_text(
+                pieces[1] if len(pieces) == 2 else ""
+            )
+        except ValueError as error:
+            session.send(str(error).capitalize() + ".")
+            return
+
+        target_name = target.player.name
+        target.request_kick(session.player.name, reason)
+        session.send("Kick requested for {0}.".format(target_name))
+
+
+@register_command
+class HealCommand(Command):
+    name = "heal"
+    aliases = ()
+    usage = "/heal [player] [amount|full]"
+    summary = "Heal yourself or an online player through the shared health API."
+    admin_only = True
+
+    def execute(self, session, arguments):
+        pieces = arguments.split()
+
+        if len(pieces) > 2:
+            session.send("Usage: {0}".format(self.usage))
+            return
+
+        target = session
+        amount_text = "full"
+
+        if len(pieces) == 1:
+            possible_target = find_active_session(pieces[0])
+
+            if possible_target is not None:
+                target = possible_target
+            elif pieces[0].lower() == "full" or pieces[0].isdigit():
+                amount_text = pieces[0]
+            else:
+                session.send("That player is not online.")
+                return
+        elif len(pieces) == 2:
+            target = find_active_session(pieces[0])
+            amount_text = pieces[1]
+
+            if target is None:
+                session.send("That player is not online.")
+                return
+
+        if amount_text.lower() != "full":
+            try:
+                amount = int(amount_text)
+            except ValueError:
+                session.send("Healing must be a positive integer or 'full'.")
+                return
+
+            if amount <= 0 or amount > MAX_HEALTH:
+                session.send(
+                    "Healing must be between 1 and {0}.".format(MAX_HEALTH)
+                )
+                return
+        else:
+            amount = None
+
+        if target is None or target.player is None:
+            session.send("That player is not online.")
+            return
+
+        acquired = target.state_lock.acquire(timeout=1.0)
+
+        if not acquired:
+            session.send("That player is busy; no healing was applied.")
+            return
+
+        try:
+            player = target.player
+
+            if player is None:
+                session.send("That player is no longer online.")
+                return
+
+            wanted = player.max_health - player.health if amount is None else amount
+            healed = player.heal(wanted)
+            target_name = player.name
+        finally:
+            target.state_lock.release()
+
+        target.send(
+            "{0} heals you for {1} health.".format(
+                session.player.name,
+                healed
+            )
+        )
+
+        if target is not session:
+            session.send(
+                "You heal {0} for {1} health.".format(target_name, healed)
+            )
+
+
+@register_command
+class SaveCommand(Command):
+    name = "save"
+    aliases = ()
+    usage = "/save [player|all|world]"
+    summary = "Queue or wait for bounded character/world snapshots."
+    admin_only = True
+
+    def execute(self, session, arguments):
+        wanted = arguments.strip()
+
+        if wanted.lower() == "all":
+            counts = {}
+
+            for active_session in active_sessions_snapshot():
+                result = active_session.save_if_changed(wait=False)
+                counts[result] = counts.get(result, 0) + 1
+
+            world_result = "unavailable"
+
+            if WORLD_SAVE_COORDINATOR is not None:
+                world_result = WORLD_SAVE_COORDINATOR.save_if_changed(
+                    wait=False
+                )
+
+            summary = ", ".join(
+                "{0}={1}".format(key, counts[key])
+                for key in sorted(counts)
+            ) or "no active characters"
+            session.send(
+                "Save pass: {0}; world={1}.".format(summary, world_result)
+            )
+            return
+
+        if wanted.lower() == "world":
+            if WORLD_SAVE_COORDINATOR is None:
+                session.send("World persistence is unavailable.")
+                return
+
+            result = WORLD_SAVE_COORDINATOR.save_if_changed(
+                wait=True,
+                timeout=2.0
+            )
+            session.send("World save result: {0}.".format(result))
+            return
+
+        target = session if not wanted else find_active_session(wanted)
+
+        if target is None or target.player is None:
+            session.send("That player is not online.")
+            return
+
+        target_name = target.player.name
+        result = target.save_if_changed(wait=True, timeout=2.0)
+        session.send(
+            "Character save for {0}: {1}.".format(target_name, result)
+        )
+
+
+@register_command
+class AdminStatusCommand(Command):
+    name = "adminstatus"
+    aliases = ()
+    usage = "/adminstatus [rooms|npcs]"
+    summary = "Inspect bounded server, persistence, room, and NPC status."
+    admin_only = True
+
+    def execute(self, session, arguments):
+        wanted = arguments.strip().lower()
+
+        if wanted not in ("", "rooms", "npcs"):
+            session.send("Usage: {0}".format(self.usage))
+            return
+
+        if wanted == "rooms":
+            rooms = sorted(
+                session.world.rooms.values(),
+                key=lambda room: room.room_id
+            )
+
+            for room in rooms[:20]:
+                state = room.activity_snapshot()
+                session.send(
+                    "room {0}: occupancy={1} visits={2} interactions={3}".format(
+                        state["room_id"],
+                        state["occupancy"],
+                        state["visits"],
+                        state["interactions"]
+                    )
+                )
+
+            if len(rooms) > 20:
+                session.send("{0} additional rooms omitted.".format(len(rooms) - 20))
+            return
+
+        if wanted == "npcs":
+            with NPC_MANAGER.lock:
+                npcs = list(NPC_MANAGER.npcs)
+
+            for npc in npcs[:20]:
+                state = npc.actor_status_snapshot()
+                room_id = None if npc.room is None else npc.room.room_id
+                session.send(
+                    "npc {0}: room={1} mode={2} fallback={3} queued={4} errors={5}".format(
+                        npc.name,
+                        room_id,
+                        npc.behavior_mode,
+                        state["fallback_mode"],
+                        state["mailbox_depth"],
+                        state["errors"]
+                    )
+                )
+
+            if len(npcs) > 20:
+                session.send("{0} additional NPCs omitted.".format(len(npcs) - 20))
+            return
+
+        connections = (
+            session.server_control.connection_snapshot()
+            if session.server_control is not None
+            and hasattr(session.server_control, "connection_snapshot")
+            else {"total": "n/a", "preauth": "n/a", "authenticated": "n/a"}
+        )
+        npc_state = NPC_MANAGER.status_snapshot()
+        session.send(
+            "connections: total={0} preauth={1} authenticated={2}".format(
+                connections["total"],
+                connections["preauth"],
+                connections["authenticated"]
+            )
+        )
+        session.send(
+            "sessions={0} db_schema={1} NPCs: registered={2} active={3} "
+            "unresponsive={4} queued={5}".format(
+                len(active_sessions_snapshot()),
+                DATABASE_SCHEMA_VERSION,
+                npc_state["registered"],
+                npc_state["active"],
+                npc_state["unresponsive"],
+                npc_state["queued"]
+            )
+        )
+
+        for label, component in (
+            ("character_writer", PERSISTENCE_WRITER),
+            ("character_autosave", AUTOSAVE_COORDINATOR),
+            ("world_writer", WORLD_STATE_WRITER),
+            ("world_autosave", WORLD_SAVE_COORDINATOR),
+            ("status_decay", STATUS_COORDINATOR)
+        ):
+            if component is None:
+                session.send("{0}: unavailable".format(label))
+            else:
+                session.send(
+                    "{0}: {1}".format(label, component.status_snapshot())
+                )
 
 
 @register_command
@@ -595,7 +942,8 @@ class Session(object):
         world,
         persistence_writer=None,
         monotonic_source=None,
-        wall_time_source=None
+        wall_time_source=None,
+        server_control=None
     ):
         self.request = request
         self.address = address
@@ -624,6 +972,7 @@ class Session(object):
         self.input_parser = TelnetInputParser(MAX_INPUT_LENGTH)
         self.monotonic_source = monotonic_source or time.monotonic
         self.wall_time_source = wall_time_source or time.time
+        self.server_control = server_control
         self.last_status_update = self.monotonic_source()
 
     def reset_status_clock(self):
@@ -693,9 +1042,23 @@ class Session(object):
         if not self.running and not wait:
             return "unavailable"
 
-        state_acquired = self.state_lock.acquire(blocking=bool(wait))
+        deadline = None
+
+        if wait:
+            timeout = max(0.0, float(timeout))
+            deadline = time.monotonic() + timeout
+            state_acquired = self.state_lock.acquire(timeout=timeout)
+        else:
+            state_acquired = self.state_lock.acquire(blocking=False)
 
         if not state_acquired:
+            if wait:
+                with self.save_lock:
+                    self.last_save_error = RuntimeError(
+                        "timed out waiting for player state lock"
+                    )
+                return "failed"
+
             return "busy"
 
         try:
@@ -758,7 +1121,9 @@ class Session(object):
                     return "failed"
 
         if wait_for_existing is not None:
-            if wait_for_existing.wait(timeout):
+            remaining = max(0.0, deadline - time.monotonic())
+
+            if wait_for_existing.wait(remaining):
                 return "unchanged"
 
             with self.save_lock:
@@ -770,7 +1135,10 @@ class Session(object):
                     )
             return "failed"
 
-        if wait and not receipt.wait(timeout):
+        if wait:
+            remaining = max(0.0, deadline - time.monotonic())
+
+        if wait and not receipt.wait(remaining):
             with self.save_lock:
                 if receipt.error is not None:
                     self.last_save_error = receipt.error
@@ -1326,6 +1694,29 @@ class Session(object):
 
         return True
 
+    def request_kick(self, admin_name, reason=""):
+        message = "You have been kicked by {0}.".format(admin_name)
+
+        if reason:
+            message += " Reason: {0}".format(reason)
+
+        self.send(message)
+        close_after_output = getattr(
+            self.request,
+            "request_close_after_output",
+            None
+        )
+
+        if close_after_output is not None:
+            close_after_output(1.0)
+        else:
+            try:
+                self.request.shutdown(2)
+            except Exception:
+                pass
+
+        self.running = False
+
     def handle_chat(self, line):
         self.player.room.broadcast(
             "<{0}> {1}".format(colour(self.player.name,Colour.BRIGHT_CYAN), line)
@@ -1438,6 +1829,9 @@ class Session(object):
             line = self.read_line()
 
             if line is None:
+                break
+
+            if not self.running:
                 break
 
             if not line:
@@ -2069,7 +2463,8 @@ def begin_selector_connection(server, connection):
         connection,
         connection.address,
         WORLD,
-        persistence_writer=PERSISTENCE_WRITER
+        persistence_writer=PERSISTENCE_WRITER,
+        server_control=server
     )
     controller = PreAuthController(server, connection, session)
     connection.auth_controller = controller

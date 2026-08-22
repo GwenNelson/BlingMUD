@@ -38,6 +38,7 @@ class CommandSpecTests(unittest.TestCase):
             COMMANDS.pop(name, None)
 
     def test_every_registered_global_command_has_real_metadata(self):
+        self.player.is_admin = True
         specs = command_specs_for_session(self.session, include_room=False)
         unique_commands = set(id(command) for command in COMMANDS.values())
 

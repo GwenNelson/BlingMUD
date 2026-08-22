@@ -32,6 +32,7 @@ Known bugs / first fixes
 ☒ Make room enter/leave idempotent and clear stale `player.room` references on successful departure.
 ☒ Prevent normal item creation, rewards, taking, and dropping from exceeding the persistence inventory bound or the room-item bound; preserve one-time rewards and finite shared resources when inventory is full.
 ☒ Make `/get possum` recognize the revealed NPC as non-takeable, and accept implicit item-first, `item to possum`, and `possum item` offer grammar without bypassing transfer checks.
+☒ Prevent a kicked/closed gameplay worker from executing one command that was already queued when the session stopped.
 ☐ Continue reviewing for obvious bugs and security issues before each new feature patch.
 
 Core engine
@@ -85,7 +86,9 @@ OpenRouter implementation is deferred until the user explicitly authorizes it ag
 
 Admin / ops
 
-☐ Add commands for inspecting room activity, NPC mode, NPC memory, and brain health.
+☒ Add admin-only `/shutdown now`, `/kick`, `/heal`, `/save`, and `/adminstatus`, with confirmation/bounds, graceful output draining, shared health/save paths, and non-admin help/completion filtering.
+☒ Add bounded `/adminstatus rooms` and `/adminstatus npcs` views for activity, behavior mode, actor fallback, queues, and errors.
+☐ Extend admin inspection to future structured NPC memory, LLM budgets, and brain health after those systems exist.
 ☐ Add commands to force NPC mode changes for debugging.
 ☐ Add logging around login, save/load, NPC decisions, and AI fallback.
 ☐ Add safe reload/debug tools where they do not risk player state.

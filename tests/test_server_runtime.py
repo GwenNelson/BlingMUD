@@ -1,5 +1,6 @@
 import os
 import io
+import queue
 import sys
 import tempfile
 import threading
@@ -112,6 +113,38 @@ class RuntimeConfigurationTests(unittest.TestCase):
 
         self.assertEqual(calls, ["ok"])
         self.assertIn("maintenance callback failed", warning)
+
+    def test_graceful_shutdown_waits_for_output_or_finite_deadline(self):
+        class PendingConnection(object):
+            def __init__(self):
+                self.pending = True
+
+            def has_output(self):
+                return self.pending
+
+        clock = FakeClock(10.0)
+        connection = PendingConnection()
+        runtime = object.__new__(server_runtime.SelectorMudServer)
+        runtime.time_source = clock
+        runtime.control_queue = queue.Queue()
+        runtime.graceful_shutdown_deadline = None
+        runtime.listener = None
+        runtime.connections = {connection}
+        runtime.stopping = threading.Event()
+        runtime.wake = lambda: None
+
+        runtime.request_graceful_shutdown(1.0)
+        runtime._drain_controls()
+        self.assertEqual(runtime.graceful_shutdown_deadline, 11.0)
+        runtime._check_graceful_shutdown()
+        self.assertFalse(runtime.stopping.is_set())
+
+        connection.pending = False
+        runtime._check_graceful_shutdown()
+        self.assertTrue(runtime.stopping.is_set())
+
+        with self.assertRaises(TypeError):
+            runtime.request_graceful_shutdown(float("nan"))
 
 
 class ConnectionAdmissionTests(unittest.TestCase):

@@ -92,11 +92,11 @@ class CommandDispatchTests(unittest.TestCase):
         self.assertEqual(self.transcript().count("Room-specific look."), 2)
         self.assertNotIn("Global description", self.transcript())
 
-    def test_reserved_unknown_command_bypasses_room(self):
+    def test_reserved_admin_command_bypasses_room_and_checks_privilege(self):
         self.session.handle_command("/shutdown 30 maintenance")
 
         self.assertEqual(self.room.calls, [])
-        self.assertIn("Unknown command: /shutdown", self.transcript())
+        self.assertIn("lack sufficient fabulousness", self.transcript())
         self.assertNotIn("improperly claimed", self.transcript())
 
     def test_reserved_global_alias_bypasses_room_and_executes_global(self):

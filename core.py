@@ -1599,6 +1599,27 @@ class NPCManager(object):
            if self._npc_is_active(npc)
        )
 
+   def status_snapshot(self):
+       with self.lock:
+           npcs = list(self.npcs)
+           running = self.running
+
+       actor_snapshots = [npc.actor_status_snapshot() for npc in npcs]
+       return {
+           "running": running,
+           "registered": len(npcs),
+           "active": len(self.active_npcs_snapshot()),
+           "unresponsive": len([
+               snapshot
+               for snapshot in actor_snapshots
+               if snapshot["unresponsive"]
+           ]),
+           "queued": sum(
+               snapshot["mailbox_depth"]
+               for snapshot in actor_snapshots
+           )
+       }
+
    def tick(self):
        scheduled = []
 

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import threading
+import time
 import unittest
 
 import blingmud
@@ -256,6 +257,38 @@ class SessionAutosaveTests(unittest.TestCase):
             release.set()
             holder.join(1.0)
             writer.shutdown(1.0)
+
+        self.assertFalse(holder.is_alive())
+
+    def test_waiting_save_bounds_player_state_lock_acquisition(self):
+        writer = PersistenceWriter(lambda username, encoded: None)
+        writer.start()
+        session, player = self._make_session(writer)
+        player.fabulousness = 21
+        locked = threading.Event()
+        release = threading.Event()
+
+        def hold_gameplay_state():
+            with session.state_lock:
+                locked.set()
+                release.wait(1.0)
+
+        holder = threading.Thread(target=hold_gameplay_state, daemon=True)
+        holder.start()
+
+        try:
+            self.assertTrue(locked.wait(0.5))
+            before = time.monotonic()
+            self.assertEqual(
+                session.save_if_changed(wait=True, timeout=0.02),
+                "failed"
+            )
+            self.assertLess(time.monotonic() - before, 0.5)
+            self.assertIn("state lock", str(session.last_save_error))
+        finally:
+            release.set()
+            holder.join(0.5)
+            writer.shutdown(0.5)
 
         self.assertFalse(holder.is_alive())
 

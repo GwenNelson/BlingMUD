@@ -9,6 +9,7 @@ thread.
 import collections
 import concurrent.futures
 import errno
+import math
 import queue
 import selectors
 import socket
@@ -544,11 +545,13 @@ class SelectorMudServer(object):
         self.socket_factory = socket_factory or socket.socket
         self.listener = None
         self.connections = set()
+        self.connections_lock = threading.RLock()
         self.admission = ConnectionAdmission()
         self.rate_limiter = AuthRateLimiter(self.time_source)
         self.control_queue = queue.Queue()
         self.maintenance_callbacks = []
         self.stopping = threading.Event()
+        self.graceful_shutdown_deadline = None
         self.owner_thread = None
         self.wake_reader, self.wake_writer = socket.socketpair()
         self.wake_reader.setblocking(False)
@@ -591,6 +594,18 @@ class SelectorMudServer(object):
 
     def request_close(self, connection):
         self.control_queue.put(("close", connection))
+        self.wake()
+
+    def request_graceful_shutdown(self, grace_seconds=1.0):
+        if (
+            isinstance(grace_seconds, bool)
+            or not isinstance(grace_seconds, (int, float))
+            or not math.isfinite(grace_seconds)
+        ):
+            raise TypeError("shutdown grace must be a number")
+
+        grace = max(0.0, min(5.0, float(grace_seconds)))
+        self.control_queue.put(("shutdown", self.time_source() + grace))
         self.wake()
 
     def add_maintenance_callback(self, callback):
@@ -645,7 +660,8 @@ class SelectorMudServer(object):
                 address,
                 self.time_source
             )
-            self.connections.add(connection)
+            with self.connections_lock:
+                self.connections.add(connection)
             self.selector.register(
                 client_socket,
                 selectors.EVENT_READ,
@@ -727,10 +743,49 @@ class SelectorMudServer(object):
 
             if action == "close":
                 self._close_connection(connection)
+            elif action == "shutdown":
+                deadline = connection
+
+                if (
+                    self.graceful_shutdown_deadline is None
+                    or deadline < self.graceful_shutdown_deadline
+                ):
+                    self.graceful_shutdown_deadline = deadline
+
+                self._close_listener()
+
+    def _close_listener(self):
+        if self.listener is None:
+            return
+
+        try:
+            self.selector.unregister(self.listener)
+        except Exception:
+            pass
+
+        try:
+            self.listener.close()
+        except OSError:
+            pass
+
+        self.listener = None
+
+    def _check_graceful_shutdown(self):
+        deadline = self.graceful_shutdown_deadline
+
+        if deadline is None:
+            return
+
+        if (
+            self.time_source() >= deadline
+            or all(not connection.has_output() for connection in self.connections)
+        ):
+            self.shutdown()
 
     def _close_connection(self, connection):
         if connection.closed:
-            self.connections.discard(connection)
+            with self.connections_lock:
+                self.connections.discard(connection)
             return
 
         try:
@@ -749,7 +804,8 @@ class SelectorMudServer(object):
             pass
 
         connection.mark_closed()
-        self.connections.discard(connection)
+        with self.connections_lock:
+            self.connections.discard(connection)
 
     def _check_idle_connections(self):
         now = self.time_source()
@@ -814,6 +870,7 @@ class SelectorMudServer(object):
         self._drain_controls()
         self._check_idle_connections()
         self._run_maintenance()
+        self._check_graceful_shutdown()
 
     def serve_forever(self):
         self.bind()
@@ -832,18 +889,7 @@ class SelectorMudServer(object):
         for connection in list(self.connections):
             self._close_connection(connection)
 
-        if self.listener is not None:
-            try:
-                self.selector.unregister(self.listener)
-            except Exception:
-                pass
-
-            try:
-                self.listener.close()
-            except OSError:
-                pass
-
-            self.listener = None
+        self._close_listener()
 
         self.auth_pool.shutdown()
 
@@ -856,16 +902,20 @@ class SelectorMudServer(object):
         self.selector.close()
 
     def connection_snapshot(self):
+        with self.connections_lock:
+            connections = list(self.connections)
+
         return {
-            "total": len(self.connections),
+            "total": len(connections),
             "preauth": len([
                 connection
-                for connection in self.connections
+                for connection in connections
                 if not connection.authenticated
             ]),
             "authenticated": len([
                 connection
-                for connection in self.connections
+                for connection in connections
                 if connection.authenticated
-            ])
+            ]),
+            "shutdown_pending": self.graceful_shutdown_deadline is not None
         }
