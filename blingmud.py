@@ -31,6 +31,12 @@ USERS_DB = 'users.sqlite'
 HOST = "0.0.0.0"
 PORT = 4000
 
+PLAINTEXT_TELNET_WARNING = (
+    "SECURITY WARNING: BlingMUD uses plaintext Telnet.",
+    "Passwords and gameplay can be observed or altered in transit.",
+    "Do not reuse an important password or treat this connection as secure."
+)
+
 # Active sessions, indexed by lowercase username.
 SESSIONS = {}
 
@@ -483,6 +489,18 @@ class Session(object):
         with self.send_lock:
             self.request.sendall(negotiation)
 
+    def send_transport_warning(self):
+        """Warn before authentication that Telnet has no encryption."""
+        self.send(colour("**** PLAINTEXT TELNET WARNING ****", Colour.BRIGHT_RED))
+
+        for line in PLAINTEXT_TELNET_WARNING:
+            self.send(line)
+
+        self.send(
+            "BlingMUD suppresses password echo, but a client may still "
+            "display typed characters."
+        )
+
     def _consume_telnet_command(self):
         """Consume one Telnet command after an IAC byte."""
 
@@ -707,9 +725,7 @@ class Session(object):
         self.send("BlingMUD is in heavy development right now - watch this space for updates!")
         self.send("")
         self.send("")
-        self.send(colour("**** IMPORTANT ****",Colour.BRIGHT_RED))
-        self.send("DO NOT reuse an important password here.")
-        self.send("Please also note that passwords will potentially echo - you have been warned!")
+        self.send_transport_warning()
         self.send("")
 
         while self.running:
@@ -761,7 +777,6 @@ class Session(object):
                 self.typewriter("NEWUSER\r\n")
                 return self.create_user()
 
-            self.send("Please note, your password input might echo - meaning people might see you typing it")
             self.prompt("Password: ")
             password = self.read_line(
                 hidden=True,
@@ -1153,6 +1168,15 @@ def main():
         print("WARNING: admin.hash not found.")
         print("         Administrative commands are disabled.")
 
+
+    print("")
+    print("*** ACCEPTED PLAINTEXT TRANSPORT RISK ***")
+
+    for line in PLAINTEXT_TELNET_WARNING:
+        print(line)
+
+    print("No TLS or encrypted transport is implemented by this server.")
+    print("")
 
     server = ThreadedMudServer((HOST, PORT), MudRequestHandler)
 

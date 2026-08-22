@@ -26,7 +26,9 @@ The goal is to scale to groups of 10-20 active users at most and again to make i
 
 UI is currently plain Telnet. Telnet provides no transport encryption, so passwords and gameplay traffic can be observed or altered by anyone able to intercept the connection. Do not reuse an important password here, and do not expose the current listener directly to an untrusted network while treating it as secure.
 
-For a real deployment, bind BlingMUD to a trusted interface and place it behind a separately reviewed encrypted transport or secure front end. That deployment work is not implemented by this repository yet.
+The server suppresses password echo and never intentionally redraws hidden input, but a Telnet client may still display typed characters. That does not protect the password on the network.
+
+The current public `0.0.0.0` listener default and lack of TLS are explicitly accepted project constraints. Operators must assess and control network exposure themselves. BlingMUD prints this warning at startup and before login; neither warning makes plaintext Telnet secure.
 
 ## Fun stuff
 

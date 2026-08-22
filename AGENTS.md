@@ -69,3 +69,5 @@ Project-specific guidance:
 - Password hashes use salted PBKDF2-SHA256; preserve verification and successful-login migration for legacy SHA-256 records until a deliberate migration removes that compatibility path.
 - Keep input and password-work bounds intact: client lines are finite, stored hash fields are size-checked, and untrusted PBKDF iteration counts must be rejected before key derivation.
 - Do not describe the current plain Telnet connection as secure transport, even though stored password hashing has been hardened.
+- Preserve the prominent plaintext-Telnet warning at startup and before authentication. The server deliberately suppresses password echo and hidden-input redraw, but client display cannot be guaranteed and network traffic remains unencrypted.
+- TLS is deliberately outside the current implementation plan. Do not quietly add it or claim the accepted public-listener default is secure.

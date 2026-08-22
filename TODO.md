@@ -37,7 +37,8 @@ Core engine
 
 ☒ Formalize current player save/load as bounded version-1 JSON with safe legacy-empty migration.
 ☒ Keep auth decisions out of gameplay state; in particular, never persist or restore session admin privilege.
-☐ Add encrypted transport or a secure front end before treating login as safe over untrusted networks.
+☒ Warn prominently at startup and before authentication that Telnet is plaintext; suppress password echo and hidden-input redraw without claiming this protects network traffic.
+☒ Record the accepted residual risk: the listener remains public by default and TLS is deliberately outside the current implementation plan, so operators must control network exposure.
 ☒ Save supported player state on logout before removing the player from their final room, while preserving the previous snapshot if serialization fails.
 ☐ Add periodic autosave without adding an unbounded or uninterruptible background process.
 ☐ Add persistent IDs and templates for rooms, items, and world objects where needed.

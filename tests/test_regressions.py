@@ -34,6 +34,20 @@ class DummyRequest(object):
         return b""
 
 
+class InputRequest(DummyRequest):
+    def __init__(self, incoming):
+        DummyRequest.__init__(self)
+        self.incoming = bytearray(incoming)
+
+    def recv(self, size):
+        if not self.incoming:
+            return b""
+
+        data = bytes(self.incoming[:size])
+        del self.incoming[:size]
+        return data
+
+
 class TestRunnerRegressionTests(unittest.TestCase):
     def test_runner_refuses_symlinked_temp_directory(self):
         original_stderr = sys.stderr
@@ -150,6 +164,46 @@ class ItemRegressionTests(unittest.TestCase):
 
 
 class PasswordRegressionTests(unittest.TestCase):
+    def test_login_warns_about_plaintext_telnet_before_reading_name(self):
+        request = DummyRequest()
+        session = blingmud.Session(
+            request,
+            ("127.0.0.1", 0),
+            blingmud.WORLD
+        )
+
+        self.assertFalse(session.login())
+
+        output = b"".join(request.sent).decode("utf-8", "replace")
+        self.assertIn("PLAINTEXT TELNET WARNING", output)
+
+        for warning_line in blingmud.PLAINTEXT_TELNET_WARNING:
+            self.assertIn(warning_line, output)
+
+        self.assertLess(output.index("PLAINTEXT TELNET WARNING"), output.index("Name: "))
+
+    def test_hidden_input_is_never_echoed_or_redrawn(self):
+        request = InputRequest(b"secret password\r")
+        session = blingmud.Session(
+            request,
+            ("127.0.0.1", 0),
+            blingmud.WORLD
+        )
+
+        session.prompt("Password: ")
+        password = session.read_line(hidden=True)
+
+        self.assertEqual(password, "secret password")
+        self.assertNotIn(b"secret password", b"".join(request.sent))
+
+        session.prompt_text = "Password: "
+        session.current_input = "another secret"
+        session.input_active = True
+        session.input_hidden = True
+        session.send("An asynchronous notice.")
+
+        self.assertNotIn(b"another secret", b"".join(request.sent))
+
     def test_password_hash_is_salted_and_verifiable(self):
         first = blingmud.password_hash("correct horse battery staple")
         second = blingmud.password_hash("correct horse battery staple")
