@@ -39,3 +39,5 @@ Project-specific guidance:
 - Treat Brave Sir Knight as the baseline example for NPC behavior design.
 - Keep the codebase compatible with the current threaded telnet architecture unless the roadmap says otherwise.
 - If a change affects persistence, NPC brains, room triggers, or AI fallback, be careful to preserve save/load and failure-mode behavior.
+- Password hashes use salted PBKDF2-SHA256; preserve verification and successful-login migration for legacy SHA-256 records until a deliberate migration removes that compatibility path.
+- Do not describe the current plain Telnet connection as secure transport, even though stored password hashing has been hardened.

@@ -101,6 +101,7 @@ class Room(object):
         with self.lock:
             if npc in self.npcs:
                 self.npcs.remove(npc)
+                NPCManager.instance().unregister(npc)
                 npc.room = None
 
     def enter(self, player, announce=True):
@@ -317,12 +318,15 @@ class NPCManager(object):
 
    def unregister(self, npc):
        with self.lock:
-            self.npcs.remove(npc)
+            if npc in self.npcs:
+               self.npcs.remove(npc)
 
    def tick(self):
        with self.lock:
-            for npc in list(self.npcs):
-                npc.tick()
+            active_npcs = list(self.npcs)
+
+       for npc in active_npcs:
+            npc.tick()
 
    def _run_ticker_thread(self):
        while self.running:

@@ -21,11 +21,14 @@ First fixes
 - [done] Fix the command dispatcher bug in [blingmud.py:695](</home/gwen/codex-stuff/BlingMUD/blingmud.py#L695>) where `Session.handle_command` uses `session` instead of `self`; this is now corrected in the current codebase.
 - [done] Fix the wearable-slot bug in [core.py:55](</home/gwen/codex-stuff/BlingMUD/core.py#L55>) where `Item.__init__` ignored the `worn_where` argument and forced every wearable into `Head`; this is now corrected in the current codebase.
 - [done] Add regression tests for both issues before doing broader refactors so the same mistakes do not slip back in.
+- [done] Replace persistent unsalted SHA-256 password storage with salted PBKDF2-SHA256 hashes, while accepting and automatically upgrading legacy user and admin hashes after successful authentication.
+- [done] Write `admin.hash` with owner-only permissions and compare password digests using constant-time comparison.
+- [done] Unregister NPCs from `NPCManager` when they leave a room so removed NPCs do not remain in the global tick list indefinitely.
 
 What exists vs what is still planned
 
-- Implemented now: the two first-fix engine bugs above and their regression coverage.
-- Still planned: the NPC abstraction, OpenRouter failover, room-aware scheduling, persistence hardening, admin tooling, and the village content from the email threads.
+- Implemented now: the first-fix engine bugs above, stronger password storage with legacy migration, NPC-manager removal cleanup, and regression coverage for all of them.
+- Still planned: the NPC abstraction, OpenRouter failover, room-aware scheduling, gameplay-state persistence hardening, admin tooling, transport security, and the village content from the email threads.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 
 NPC architecture
@@ -68,6 +71,7 @@ Persistence and character state
 - Add a player-state repository layer so loading/saving a character does not depend on session code.
 - Add migrations for future schema evolution so new fields can be added without breaking old characters.
 - Keep auth data and gameplay state separate in the design, even if they initially live in the same SQLite database.
+- Password storage now uses salted PBKDF2-SHA256 and upgrades legacy SHA-256 hashes after a successful login; this is implemented, but Telnet transport remains unencrypted and must not be treated as secure authentication over an untrusted network.
 
 Admin and operational tooling
 
@@ -705,11 +709,13 @@ What exists vs what is still planned
   - threaded telnet server
   - basic login / character creation flow
   - SQLite user table with serialized state
+  - salted PBKDF2-SHA256 password hashes with successful-login migration from the legacy unsalted format
   - room objects with exits, items, players, and NPC lists
   - command registry
   - Brave Sir Knight as a rich, hand-authored FSM-style NPC
   - Crossroads and Fabulous Chamber demo content
   - simple item/equipment model
+  - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
   - persistent character state versioning and autosave
   - generalized NPC behavior framework
@@ -720,6 +726,7 @@ What exists vs what is still planned
   - the whole email-driven village content set
   - structured room/NPC event schemas
   - content data loading / world authoring layer
+  - encrypted client transport or a secure front end for authentication outside trusted networks
 
 - Future agents must update this section every time they complete or partially complete one of the planned systems above.
 - Do not leave this section stale: if a future run changes persistence, NPC architecture, or village content, it must be reflected here before handing work off again.

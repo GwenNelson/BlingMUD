@@ -14,6 +14,7 @@ import random
 import json
 import sqlite3
 import hashlib
+import hmac
 import socketserver
 import threading
 import traceback
@@ -22,15 +23,6 @@ USERS_DB = 'users.sqlite'
 HOST = "0.0.0.0"
 PORT = 4000
 
-# Temporary in-memory user database.
-# Everything disappears whenever the server restarts.
-#
-# username_lower: {
-#     "name": original_display_name,
-#     "password": SHA-256 password hash
-# }
-USERS = {}
-
 # Active sessions, indexed by lowercase username.
 SESSIONS = {}
 
@@ -38,6 +30,10 @@ USERS_LOCK = threading.RLock()
 SESSIONS_LOCK = threading.RLock()
 
 ADMIN_PASSWORD_HASH = None
+
+PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
+PASSWORD_HASH_ITERATIONS = 600000
+PASSWORD_SALT_BYTES = 16
 
 IAC = 255
 WILL = 251
@@ -50,13 +46,81 @@ TELOPT_SGA = 3
 TELOPT_LINEMODE = 34
 
 def password_hash(password):
-    """Return a simple password hash.
-
-    This is adequate only for the deliberately temporary prototype.
-    Use a proper slow password hash before adding persistent accounts.
-    """
+    """Return a salted, deliberately slow password hash for storage."""
+    salt = os.urandom(PASSWORD_SALT_BYTES)
     encoded = password.encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        encoded,
+        salt,
+        PASSWORD_HASH_ITERATIONS
+    )
+
+    return "{0}${1}${2}${3}".format(
+        PASSWORD_HASH_SCHEME,
+        PASSWORD_HASH_ITERATIONS,
+        salt.hex(),
+        digest.hex()
+    )
+
+
+def verify_password(password, stored_hash):
+    """Verify current hashes and legacy unsalted SHA-256 hashes."""
+    if password is None or not stored_hash:
+        return False
+
+    if "$" not in stored_hash:
+        legacy_digest = hashlib.sha256(
+            password.encode("utf-8")
+        ).hexdigest()
+        return hmac.compare_digest(legacy_digest, stored_hash)
+
+    try:
+        scheme, iterations_text, salt_hex, digest_hex = stored_hash.split("$", 3)
+        iterations = int(iterations_text)
+        salt = bytes.fromhex(salt_hex)
+        expected_digest = bytes.fromhex(digest_hex)
+    except (TypeError, ValueError):
+        return False
+
+    if scheme != PASSWORD_HASH_SCHEME or iterations <= 0:
+        return False
+
+    actual_digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        iterations
+    )
+    return hmac.compare_digest(actual_digest, expected_digest)
+
+
+def password_hash_needs_upgrade(stored_hash):
+    if not stored_hash:
+        return True
+
+    prefix = "{0}${1}$".format(
+        PASSWORD_HASH_SCHEME,
+        PASSWORD_HASH_ITERATIONS
+    )
+    return not stored_hash.startswith(prefix)
+
+
+def write_admin_password_hash(stored_hash, filename="admin.hash"):
+    descriptor = os.open(
+        filename,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        0o600
+    )
+
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w") as handle:
+            descriptor = None
+            handle.write(stored_hash)
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
 
 
 def init_user_database():
@@ -154,6 +218,21 @@ def load_user(username):
     finally:
         connection.close()
 
+
+def update_user_password_hash(username, new_password_hash):
+    connection = sqlite3.connect(USERS_DB)
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "UPDATE users SET password_hash=? WHERE username_lower=?",
+            (new_password_hash, username.lower())
+        )
+        connection.commit()
+
+    finally:
+        connection.close()
+
 def strip_telnet_control_codes(data):
     """Remove basic Telnet negotiation bytes.
 
@@ -203,14 +282,25 @@ from commands.core import *
 class AdminCommand(Command):
     name = "admin"
     def execute(self,session,arguments):
+        global ADMIN_PASSWORD_HASH
+
         if ADMIN_PASSWORD_HASH is None:
             session.send("Thou hath failed to configure thy admin.hash file, foolish fool!")
             return
         session.prompt("Password: ")
 
         try_admin_pwd = session.read_line(hidden=True)
-        hashed = password_hash(try_admin_pwd)
-        if hashed == ADMIN_PASSWORD_HASH:
+        if verify_password(try_admin_pwd, ADMIN_PASSWORD_HASH):
+           if password_hash_needs_upgrade(ADMIN_PASSWORD_HASH):
+               upgraded_hash = password_hash(try_admin_pwd)
+
+               try:
+                   write_admin_password_hash(upgraded_hash)
+               except OSError:
+                   print("WARNING: could not upgrade admin password hash.")
+               else:
+                   ADMIN_PASSWORD_HASH = upgraded_hash
+
            session.player.is_admin = True
            session.send("Reality bends to your will")
         else:
@@ -588,9 +678,13 @@ class Session(object):
             if password is None:
                 return False
 
-            if password_hash(password) != account["password"]:
+            if not verify_password(password, account["password"]):
                 self.send("Incorrect password.")
                 continue
+
+            if password_hash_needs_upgrade(account["password"]):
+                with USERS_LOCK:
+                    update_user_password_hash(name, password_hash(password))
 
             with SESSIONS_LOCK:
                 if key in SESSIONS:
@@ -638,8 +732,8 @@ class Session(object):
             if password is None:
                 return False
 
-            if len(password) < 4:
-                self.send("Please use at least four characters.")
+            if len(password) < 12:
+                self.send("Please use at least twelve characters.")
                 continue
 
             self.prompt("Confirm password: ")

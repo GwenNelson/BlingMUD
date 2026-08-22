@@ -17,12 +17,16 @@ Known bugs / first fixes
 ☒ Fix the command dispatcher bug in `Session.handle_command` where `session` is referenced instead of `self`.
 ☒ Fix the wearable-slot bug in `Item.__init__` where `worn_where` is ignored and all wearable items become `Head`.
 ☒ Add regression tests for both issues.
-☐ Review for any other obvious bugs or security issues before starting new feature work.
+☒ Replace persistent unsalted SHA-256 password hashes with salted PBKDF2-SHA256 and migrate legacy hashes after successful authentication.
+☒ Restrict the admin hash file to owner-only permissions.
+☒ Unregister removed NPCs from the global NPC manager.
+☐ Continue reviewing for obvious bugs and security issues before each new feature patch.
 
 Core engine
 
 ☐ Formalize player save/load so character state is versioned and stable.
 ☐ Keep auth data and gameplay state separate in the implementation.
+☐ Add encrypted transport or a secure front end before treating login as safe over untrusted networks.
 ☐ Add autosave or logout-save for player state.
 ☐ Add persistent IDs and templates for rooms, items, and world objects where needed.
 ☐ Add room-aware NPC activity so empty rooms do not keep ticking.
