@@ -17,6 +17,19 @@ import threading
 import time
 import traceback
 
+from telnet_parser import (
+    BackspaceInputEvent,
+    DONT,
+    DO,
+    IAC,
+    LineInputEvent,
+    TabInputEvent,
+    TelnetInputParser,
+    TextInputEvent,
+    WILL,
+    WONT
+)
+
 
 TOTAL_CONNECTION_LIMIT = 64
 PREAUTH_CONNECTION_LIMIT = 32
@@ -37,13 +50,6 @@ AUTH_FAILURE_WINDOW_SECONDS = 5.0 * 60.0
 ACCOUNT_CREATION_LIMIT = 3
 ACCOUNT_CREATION_WINDOW_SECONDS = 60.0 * 60.0
 SELECT_TIMEOUT_SECONDS = 0.25
-
-IAC = 255
-WILL = 251
-WONT = 252
-DO = 253
-DONT = 254
-
 
 class AuthRateLimiter(object):
     """Track bounded authentication failures and account creations."""
@@ -297,12 +303,11 @@ class SelectorConnection(object):
         self.line_handler = None
         self.input_hidden = False
         self.input_limit = INPUT_LINE_LIMIT
-        self.input_buffer = bytearray()
+        self.input_lock = threading.RLock()
+        self.input_parser = TelnetInputParser(INPUT_LINE_LIMIT)
         self.output_buffer = bytearray()
         self.output_lock = threading.RLock()
         self.input_lines = queue.Queue(maxsize=INPUT_QUEUE_LIMIT)
-        self.telnet_state = "data"
-        self.last_was_line_ending = False
 
     def fileno(self):
         return self.socket.fileno()
@@ -318,12 +323,10 @@ class SelectorConnection(object):
             maximum_length = INPUT_LINE_LIMIT
 
         maximum_length = max(0, min(int(maximum_length), INPUT_LINE_LIMIT))
-        self.input_hidden = bool(hidden)
-        self.input_limit = maximum_length
-
-        if self.session is not None:
-            with self.session.send_lock:
-                self.session.input_hidden = self.input_hidden
+        with self.input_lock:
+            self.input_hidden = bool(hidden)
+            self.input_limit = maximum_length
+            self.input_parser.set_maximum_length(maximum_length)
 
     def sendall(self, data):
         if not isinstance(data, (bytes, bytearray)):
@@ -417,20 +420,16 @@ class SelectorConnection(object):
         except BufferError:
             pass
 
-    def _update_session_input(self):
+    def _update_session_input(self, text, hidden):
         if self.session is None:
             return
-
-        text = self.input_buffer.decode("utf-8", "replace")
 
         with self.session.send_lock:
             self.session.current_input = text
             self.session.input_active = True
-            self.session.input_hidden = self.input_hidden
+            self.session.input_hidden = hidden
 
-    def _deliver_line(self):
-        line = self.input_buffer.decode("utf-8", "replace").strip()
-        self.input_buffer = bytearray()
+    def _deliver_line(self, line):
         self._queue_output_without_failure(b"\r\n")
 
         if self.session is not None:
@@ -456,60 +455,45 @@ class SelectorConnection(object):
                 traceback.print_exc(file=sys.stderr)
                 self.request_close()
 
+    def _deliver_tab(self, event):
+        if not self.authenticated:
+            self._queue_output_without_failure(b"\a")
+            return
+
+        try:
+            self.input_lines.put_nowait(event)
+        except queue.Full:
+            self.request_close()
+
     def feed_received(self, data):
-        """Process basic line input until the full parser lands in stage 4."""
+        """Process incremental Telnet and UTF-8 input events."""
         if not data or self.closed:
             return
 
         self.last_input_at = self.time_source()
         self.idle_warning_sent = False
 
-        for byte in data:
-            if self.telnet_state == "option":
-                self.telnet_state = "data"
-                continue
+        with self.input_lock:
+            hidden = self.input_hidden
+            events = self.input_parser.feed(data)
 
-            if self.telnet_state == "iac":
-                if byte in (WILL, WONT, DO, DONT):
-                    self.telnet_state = "option"
-                else:
-                    self.telnet_state = "data"
-                continue
+        for event in events:
+            if isinstance(event, TextInputEvent):
+                self._update_session_input(event.current_text, hidden)
 
-            if byte == IAC:
-                self.telnet_state = "iac"
-                continue
+                if not hidden:
+                    self._queue_output_without_failure(
+                        event.text.encode("utf-8", "replace")
+                    )
+            elif isinstance(event, BackspaceInputEvent):
+                self._update_session_input(event.current_text, hidden)
 
-            if byte in (10, 13):
-                if not self.last_was_line_ending:
-                    self._deliver_line()
-
-                self.last_was_line_ending = True
-                continue
-
-            self.last_was_line_ending = False
-
-            if byte in (8, 127):
-                if self.input_buffer:
-                    self.input_buffer.pop()
-                    self._update_session_input()
-
-                    if not self.input_hidden:
-                        self._queue_output_without_failure(b"\b \b")
-
-                continue
-
-            if byte < 32:
-                continue
-
-            if len(self.input_buffer) >= self.input_limit:
-                continue
-
-            self.input_buffer.append(byte)
-            self._update_session_input()
-
-            if not self.input_hidden:
-                self._queue_output_without_failure(bytes((byte,)))
+                if not hidden:
+                    self._queue_output_without_failure(b"\b \b")
+            elif isinstance(event, LineInputEvent):
+                self._deliver_line(event.text)
+            elif isinstance(event, TabInputEvent):
+                self._deliver_tab(event)
 
     def idle_action(self, now):
         idle_for = max(0.0, now - self.last_input_at)

@@ -183,7 +183,7 @@ class PasswordRegressionTests(unittest.TestCase):
         self.assertLess(output.index("PLAINTEXT TELNET WARNING"), output.index("Name: "))
 
     def test_hidden_input_is_never_echoed_or_redrawn(self):
-        request = InputRequest(b"secret password\r")
+        request = InputRequest(b"secret password\r\x00")
         session = blingmud.Session(
             request,
             ("127.0.0.1", 0),
@@ -203,6 +203,19 @@ class PasswordRegressionTests(unittest.TestCase):
         session.send("An asynchronous notice.")
 
         self.assertNotIn(b"another secret", b"".join(request.sent))
+
+    def test_direct_session_input_decodes_unicode_before_backspace(self):
+        request = InputRequest(
+            "café".encode("utf-8") + b"\x08e\r\x00"
+        )
+        session = blingmud.Session(
+            request,
+            ("127.0.0.1", 0),
+            blingmud.WORLD
+        )
+
+        self.assertEqual(session.read_line(), "cafe")
+        self.assertNotIn(b"\xef\xbf\xbd", b"".join(request.sent))
 
     def test_password_hash_is_salted_and_verifiable(self):
         first = blingmud.password_hash("correct horse battery staple")

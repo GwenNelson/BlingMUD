@@ -25,6 +25,18 @@ from persistence_runtime import (
     GRACEFUL_FLUSH_SECONDS,
     PersistenceWriter
 )
+from telnet_parser import (
+    BackspaceInputEvent,
+    DONT,
+    DO,
+    IAC,
+    LineInputEvent,
+    TabInputEvent,
+    TelnetInputParser,
+    TextInputEvent,
+    WILL,
+    WONT
+)
 
 from player_state import (
     MAX_PLAYER_STATE_BYTES,
@@ -63,12 +75,6 @@ MAX_PASSWORD_LENGTH = 4096
 MAX_STORED_PASSWORD_HASH_LENGTH = 512
 MAX_INPUT_LENGTH = 4096
 MAX_USERNAME_INPUT_LENGTH = 21
-
-IAC = 255
-WILL = 251
-WONT = 252
-DO = 253
-DONT = 254
 
 TELOPT_ECHO = 1
 TELOPT_SGA = 3
@@ -332,44 +338,6 @@ def active_sessions_snapshot():
     with SESSIONS_LOCK:
         return list(SESSIONS.values())
 
-def strip_telnet_control_codes(data):
-    """Remove basic Telnet negotiation bytes.
-
-    This is not a complete Telnet implementation. It is enough to prevent
-    common IAC negotiation sequences from appearing as player input.
-    """
-    output = bytearray()
-    position = 0
-
-    while position < len(data):
-        byte = data[position]
-
-        # IAC
-        if byte == 255:
-            if position + 1 >= len(data):
-                break
-
-            command = data[position + 1]
-
-            # WILL, WONT, DO, DONT followed by an option byte.
-            if command in (251, 252, 253, 254):
-                position += 3
-                continue
-
-            # Escaped 255.
-            if command == 255:
-                output.append(255)
-                position += 2
-                continue
-
-            position += 2
-            continue
-
-        output.append(byte)
-        position += 1
-
-    return bytes(output)
-
 from core import *
 
 from rooms.fabulous_chamber import FabulousChamber
@@ -507,6 +475,7 @@ class Session(object):
         self.last_submitted_state_json = None
         self.last_save_receipt = None
         self.last_save_error = None
+        self.input_parser = TelnetInputParser(MAX_INPUT_LENGTH)
 
     def set_persisted_state(self, encoded_state):
         with self.save_lock:
@@ -667,38 +636,6 @@ class Session(object):
         self.send_transport_warning()
         self.send("")
 
-    def _consume_telnet_command(self):
-        """Consume one Telnet command after an IAC byte."""
-
-        try:
-            command_data = self.request.recv(1)
-
-            if not command_data:
-                self.running = False
-                return False
-
-            command = command_data[0]
-
-            # WILL, WONT, DO and DONT have an option byte.
-            if command in (WILL, WONT, DO, DONT):
-                option_data = self.request.recv(1)
-
-                if not option_data:
-                    self.running = False
-                    return False
-
-                return True
-
-            # Escaped literal 255. Currently ignored.
-            if command == IAC:
-                return True
-
-            return True
-
-        except Exception:
-            self.running = False
-            return False
-
     def send(self, message=""):
         """Send a complete line to the client.
 
@@ -759,33 +696,10 @@ class Session(object):
                 if configure_input is not None:
                     configure_input(hidden, maximum_length)
 
+                self.input_parser.set_maximum_length(maximum_length)
+
         except Exception:
             self.running = False
-
-    def _input_text_from_bytes(self, data):
-        """Produce the current editable input text from received bytes.
-
-        This handles ordinary characters and basic Backspace/Delete editing.
-        More advanced cursor movement and command history can be added later.
-        """
-        data = strip_telnet_control_codes(data)
-        text = data.decode("utf-8", "replace")
-
-        result = []
-
-        for character in text:
-            if character == "\r" or character == "\n":
-                continue
-
-            if character == "\b" or ord(character) == 127:
-                if result:
-                    result.pop()
-                continue
-
-            result.append(character)
-
-        return "".join(result)
-
 
     def read_line(self, hidden=False, maximum_length=MAX_INPUT_LENGTH):
         """Read and edit one line using server-side character echo."""
@@ -794,11 +708,17 @@ class Session(object):
 
         if queued_reader is not None:
             with self.send_lock:
-                self.current_input = ""
                 self.input_active = True
                 self.input_hidden = hidden
 
-            line = queued_reader(hidden, maximum_length)
+            while self.running:
+                line = queued_reader(hidden, maximum_length)
+
+                if isinstance(line, TabInputEvent):
+                    self.handle_tab_completion(line.text)
+                    continue
+
+                break
 
             with self.send_lock:
                 self.current_input = ""
@@ -812,12 +732,12 @@ class Session(object):
 
             return line.strip()
 
-        characters = []
-
         with self.send_lock:
-            self.current_input = ""
+            self.current_input = self.input_parser.current_text
             self.input_active = True
             self.input_hidden = hidden
+
+        self.input_parser.set_maximum_length(maximum_length)
 
         while self.running:
             try:
@@ -830,57 +750,40 @@ class Session(object):
                 self.running = False
                 return None
 
-            byte = data[0]
-
-            # Telnet command.
-            if byte == IAC:
-                if not self._consume_telnet_command():
-                    return None
-                continue
-
-            # Enter may arrive as CR LF, CR NUL, or just LF.
-            if byte in (10, 13):
-                with self.send_lock:
-                    self.request.sendall(b"\r\n")
-
-                    self.current_input = ""
-                    self.prompt_text = ""
-                    self.input_active = False
-                    self.input_hidden = False
-
-                return "".join(characters).strip()
-
-            # Backspace or Delete.
-            if byte in (8, 127):
-                if characters:
-                    characters.pop()
-
+            for event in self.input_parser.feed(data):
+                if isinstance(event, TextInputEvent):
                     with self.send_lock:
-                        self.current_input = "".join(characters)
+                        self.current_input = event.current_text
 
                         if not hidden:
-                            # Move back, erase character, move back again.
+                            self.request.sendall(
+                                event.text.encode("utf-8", "replace")
+                            )
+                elif isinstance(event, BackspaceInputEvent):
+                    with self.send_lock:
+                        self.current_input = event.current_text
+
+                        if not hidden:
                             self.request.sendall(b"\b \b")
+                elif isinstance(event, TabInputEvent):
+                    self.handle_tab_completion(event.text)
+                elif isinstance(event, LineInputEvent):
+                    with self.send_lock:
+                        self.request.sendall(b"\r\n")
+                        self.current_input = ""
+                        self.prompt_text = ""
+                        self.input_active = False
+                        self.input_hidden = False
 
-                continue
+                    return event.text.strip()
 
-            # Ignore other ASCII control characters for now.
-            if byte < 32:
-                continue
-
-            if len(characters) >= maximum_length:
-                continue
-
-            character = bytes((byte,)).decode("utf-8", "replace")
-            characters.append(character)
-
+    def handle_tab_completion(self, current_text):
+        """Receive an explicit Tab event; completion lands in stage 6."""
+        try:
             with self.send_lock:
-                self.current_input = "".join(characters)
-
-                if not hidden:
-                    self.request.sendall(
-                        character.encode("utf-8", "replace")
-                    )
+                self.request.sendall(b"\a")
+        except Exception:
+            self.running = False
 
 
 

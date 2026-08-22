@@ -283,13 +283,38 @@ class SelectorConnectionTests(unittest.TestCase):
     def test_hidden_selector_input_is_not_echoed(self):
         self.connection.authenticated = True
         self.session.prompt("Password: ", hidden=True)
-        self.connection.feed_received(b"secret password\r")
+        self.connection.feed_received(b"secret password\r\x00")
 
         self.assertEqual(
             self.session.read_line(hidden=True),
             "secret password"
         )
         self.assertNotIn(b"secret password", self.connection.peek_output())
+
+    def test_tab_event_reaches_sequential_session_before_line(self):
+        tabs = []
+        self.connection.authenticated = True
+        self.session.handle_tab_completion = lambda text: tabs.append(text)
+        self.connection.feed_received(b"/lo\tok\n")
+
+        self.assertEqual(self.session.read_line(), "/look")
+        self.assertEqual(tabs, ["/lo"])
+
+    def test_input_configuration_does_not_wait_for_session_send_lock(self):
+        completed = threading.Event()
+
+        def configure():
+            self.connection.configure_input(True, 12)
+            completed.set()
+
+        worker = threading.Thread(target=configure, daemon=True)
+
+        with self.session.send_lock:
+            worker.start()
+            worker.join(0.5)
+
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(completed.is_set())
 
     def test_fragmented_telnet_negotiation_does_not_enter_input(self):
         self.connection.authenticated = True

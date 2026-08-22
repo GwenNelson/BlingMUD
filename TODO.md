@@ -44,7 +44,7 @@ Core engine
 ☒ Bound the server to 64 total, 32 pre-auth, 32 authenticated, and 8 per-IP connections; bound each output queue to 256 KiB and each authenticated input queue to 64 lines.
 ☒ Use a two-worker, 16-pending authentication pool; throttle five failures per IP/account over five minutes and three validated account creations per IP/hour.
 ☒ Disconnect pre-auth clients after 120 idle seconds; warn authenticated players with BEL at ten hours and save/disconnect them at twelve hours, resetting idle state on input.
-☐ Replace the transitional line decoder with the complete incremental Telnet/UTF-8 parser, including subnegotiation, escaped IAC, CR-NUL, Unicode backspace, and Tab events.
+☒ Replace both input paths with one bounded incremental Telnet/UTF-8 parser covering fragmented negotiation/subnegotiation, escaped IAC, CR-LF/CR-NUL/LF, Unicode backspace, unsafe terminal/bidi controls, and explicit Tab events.
 ☒ Add 60-second autosave that compares bounded serialized snapshots, skips busy state locks without blocking selector I/O, and submits changed characters only.
 ☒ Route selector-era character writes through one 64-key bounded, per-player coalescing persistence writer; retry after failures and wait for a queued final snapshot on disconnect.
 ☒ Give graceful shutdown one ten-second gameplay/persistence deadline and report workers or writes that do not finish instead of waiting indefinitely.
@@ -92,7 +92,7 @@ Commands / UX
 ☐ Implement or improve `/tell`.
 ☐ Implement or improve `/hug`.
 ☐ Implement or improve `/flirt`.
-☐ Improve help and tab completion.
+☐ Drive command-aware help and actual input replacement/completion from the implemented Tab events.
 ☐ Make room-local verbs and NPC-specific interactions easier to define.
 
 Village content
