@@ -258,6 +258,7 @@ class PlayerStateDatabaseTests(unittest.TestCase):
             RoyalPossumBottleCap
         )
         self.assertNotIn(player, self.world.other_room.players)
+        self.assertIsNone(player.room)
         self.assertTrue(request.shutdown_called)
         self.assertTrue(request.close_called)
 

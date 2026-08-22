@@ -31,8 +31,8 @@ First fixes
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with whitelisted item templates and logout save/load, NPC-manager removal cleanup, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, and regression coverage for all of them.
-- Still planned: persistence autosave and future schema migrations beyond the legacy-empty-to-v1 path, optional structured NPC memory, the `llm_fsm` advisory wrapper and OpenRouter failover, room-aware global scheduling, admin tooling, transport security, and the village content from the email threads.
+- Implemented now: the first-fix engine bugs above, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with whitelisted item templates and logout save/load, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, and regression coverage for all of them.
+- Still planned: persistence autosave and future schema migrations beyond the legacy-empty-to-v1 path, optional structured NPC memory, bounded isolation for a trusted callback that never returns, the `llm_fsm` advisory wrapper and OpenRouter failover, popularity/priority budgeting, admin tooling, transport security, and the village content from the email threads.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 - OpenRouter remains design-only and explicitly deferred; implementation requires a later, explicit user authorization.
 
@@ -76,6 +76,10 @@ NPC scheduling and room activity
 - Use a weighted score such as complexity + recent interactions + current room occupancy + room popularity, then divide by estimated token cost so the most important and most-used NPCs get expensive brain time first.
 - Cap per-NPC and per-room token budgets so one busy location cannot starve the rest of the world.
 - Default lower-priority NPCs to FSM mode whenever budget is tight, while higher-priority NPCs retain LLM access.
+- [done: local heartbeat layer] Rooms expose locked activity snapshots with current occupancy, visits, valid player interactions, and last-activity time. Duplicate lifecycle calls are inert, stale players cannot inject NPC room events, and successful leave clears the player's room reference.
+- [done: local heartbeat layer] `NPCManager` now snapshots only registered NPCs that are still members of rooms with players and rechecks eligibility immediately before each tick. Detached and cold-room NPCs therefore receive zero global heartbeat calls regardless of behavior type.
+- [done: ticker lifecycle] The ticker waits on a stop event rather than an unconditional sleep, can restart after a complete stop, and refuses to create a replacement while an earlier ticker thread remains alive.
+- [remaining safety limit] Callbacks are still trusted Python and run sequentially. Raised exceptions are isolated, but a callback that never returns can still occupy the ticker. Do not claim deadline isolation until a bounded design exists that neither leaks replacement threads nor leaves non-daemon workers blocking shutdown.
 
 Persistence and character state
 
@@ -436,7 +440,7 @@ Definitions
 Implementation order
 
 - Phase 1: [done: minimum layer] fix the concrete engine/security bugs, formalize version-1 player state persistence, and save/load on login and disconnect. Periodic autosave remains a follow-up.
-- Phase 2: [partial] the generic NPC behavior system and Brave Sir Knight migration are complete; the room-aware global scheduler with empty-room suspension remains planned.
+- Phase 2: [done: local scheduler] the generic behavior system, Brave Sir Knight migration, room activity metrics, and global empty-room heartbeat suspension are complete. Non-returning callback isolation remains a separate safety task.
 - Phase 3: add OpenRouter integration, circuit breaker failover, structured JSON output, and priority budgeting for LLM-capable NPCs.
 - Phase 4: add admin/ops commands for NPC mode control, health checks, state inspection, and reloads.
 - Phase 5: implement the village content as data-driven rooms, NPCs, items, room triggers, and status effects.
@@ -448,6 +452,7 @@ Test plan
 - Preserve the Brave Sir Knight characterization suite as a migration and future-refactor contract: it must cover every top-level state, chore sequence, greeting and farewell branch, resource decision, directional observation pool, memory behavior, invalid-state recovery, timing rule, empty-room rule, and concurrent event isolation.
 - Run the suite through `python3 run_tests.py`, retain its finite subprocess watchdog, and require every test-level barrier, condition wait, and thread join to have its own finite timeout.
 - Verify that an empty room causes no NPC ticks and no OpenRouter calls.
+- The local scheduler tests now prove that custom behaviors, not just built-in random/FSM behaviors, receive no heartbeat while detached or in empty rooms; they also cover room activity accounting, stale-event rejection, idempotent lifecycle events, cleared room references, prompt stop, clean restart, and refusal to replace a still-live ticker.
 - Verify that a populated room wakes NPCs correctly and that LLM calls are only made for eligible NPCs.
 - Verify failover from LLM to FSM on timeout, invalid JSON, or OpenRouter errors, and verify restoration after a healthy probe.
 - Verify priority ordering by simulating multiple active NPCs with different complexity and popularity scores.
@@ -751,7 +756,7 @@ What exists vs what is still planned
   - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
   - persistence autosave, future version migrations, and schemas for status effects, quests, and relationships
-  - empty-room suspension and room-aware scheduling
+  - bounded isolation for a trusted NPC callback that never returns
   - OpenRouter integration and LLM failover, deferred until explicitly re-authorized by the user
   - budgeted NPC priority system
   - admin inspection/control commands
@@ -796,9 +801,10 @@ Milestone 3: add LLM support with fallback
 
 Milestone 4: add scheduler and priority logic
 
-- Make room activity explicit.
-- Stop NPC ticking in empty rooms.
-- Wake rooms on player presence or interaction.
+- [done] Make room activity explicit through locked occupancy/visit/interaction snapshots.
+- [done] Stop global NPC heartbeat calls in empty rooms for every behavior type.
+- [done: local events] Wake rooms through immediate player enter/say/emote delivery; stale non-member events are rejected.
+- Design bounded handling for a trusted callback that never returns without leaking replacement threads.
 - Add popularity and complexity scoring.
 - Budget LLM use per room and per NPC.
 - Prioritize valuable, visible, and crowded NPCs.

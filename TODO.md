@@ -29,6 +29,7 @@ Known bugs / first fixes
 ☒ Confine test temporary files to a repository-local, non-symlinked `.test-tmp` directory.
 ☒ Bound client input so a connection cannot grow an in-memory line indefinitely.
 ☒ Reject oversized stored password hashes and excessive PBKDF iteration counts before expensive work.
+☒ Make room enter/leave idempotent and clear stale `player.room` references on successful departure.
 ☐ Continue reviewing for obvious bugs and security issues before each new feature patch.
 
 Core engine
@@ -41,7 +42,8 @@ Core engine
 ☐ Add persistent IDs and templates for rooms, items, and world objects where needed.
   ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat and royal possum bottle cap.
   ☐ Register each future persistent item explicitly as its content patch lands; never deserialize arbitrary class names.
-☐ Add room-aware NPC activity so empty rooms do not keep ticking.
+☒ Add room-aware NPC activity snapshots and make the global manager skip detached and empty-room NPCs regardless of behavior type.
+☒ Make ticker stop prompt and restartable, while refusing replacement if a previous ticker is still alive.
 
 NPCs
 

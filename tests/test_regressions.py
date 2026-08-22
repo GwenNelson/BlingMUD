@@ -463,10 +463,14 @@ class NPCBehaviorTests(unittest.TestCase):
 
         room.add_npc(failing_npc)
         room.add_npc(working_npc)
+        room.players.append(player)
+        player.room = room
 
         try:
             room.notify_player_said(player, "Hello")
         finally:
+            room.players.remove(player)
+            player.room = None
             room.remove_npc(failing_npc)
             room.remove_npc(working_npc)
             sys.stderr = original_stderr
@@ -479,8 +483,14 @@ class NPCBehaviorTests(unittest.TestCase):
     def test_broken_behavior_does_not_stop_manager_tick(self):
         manager = NPCManager()
         recording_behavior = RecordingBehavior()
-        manager.register(NPC("Broken", behavior=FailingBehavior()))
-        manager.register(NPC("Working", behavior=recording_behavior))
+        room = Room("manager_failure", "Manager Failure", "A test room.")
+        broken_npc = NPC("Broken", behavior=FailingBehavior())
+        working_npc = NPC("Working", behavior=recording_behavior)
+        room.players.append(Player("Observer"))
+        room.add_npc(broken_npc)
+        room.add_npc(working_npc)
+        manager.register(broken_npc)
+        manager.register(working_npc)
         original_stderr = sys.stderr
         sys.stderr = io.StringIO()
 
@@ -488,6 +498,8 @@ class NPCBehaviorTests(unittest.TestCase):
             manager.tick()
         finally:
             sys.stderr = original_stderr
+            room.remove_npc(broken_npc)
+            room.remove_npc(working_npc)
 
         self.assertEqual(recording_behavior.events, [("tick",)])
 
