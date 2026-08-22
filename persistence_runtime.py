@@ -4,6 +4,8 @@ import collections
 import threading
 import time
 
+from world_state import WorldStateError, serialize_world_state
+
 
 AUTOSAVE_INTERVAL_SECONDS = 60.0
 PERSISTENCE_PENDING_KEY_LIMIT = 64
@@ -37,12 +39,13 @@ class PendingSave(object):
 
 
 class PersistenceWriter(object):
-    """One coalescing writer with a finite number of pending players."""
+    """One coalescing writer with a finite number of pending keys."""
 
     def __init__(
         self,
         save_function,
-        pending_key_limit=PERSISTENCE_PENDING_KEY_LIMIT
+        pending_key_limit=PERSISTENCE_PENDING_KEY_LIMIT,
+        thread_name="blingmud-persistence"
     ):
         if not callable(save_function):
             raise TypeError("save_function must be callable")
@@ -50,8 +53,12 @@ class PersistenceWriter(object):
         if pending_key_limit <= 0:
             raise ValueError("pending_key_limit must be positive")
 
+        if not isinstance(thread_name, str) or not thread_name:
+            raise ValueError("persistence thread name must be non-empty text")
+
         self.save_function = save_function
         self.pending_key_limit = pending_key_limit
+        self.thread_name = thread_name
         self.condition = threading.Condition(threading.RLock())
         self.pending = collections.OrderedDict()
         self.in_flight = False
@@ -73,7 +80,7 @@ class PersistenceWriter(object):
             self.started = True
             self.thread = threading.Thread(
                 target=self._run,
-                name="blingmud-persistence",
+                name=self.thread_name,
                 daemon=True
             )
             self.thread.start()
@@ -88,35 +95,40 @@ class PersistenceWriter(object):
 
         receipt = SaveReceipt()
         key = username.lower()
+        rejection = None
 
         with self.condition:
             if not self.started or self.closing:
-                receipt.complete(
-                    False,
-                    RuntimeError("writer is not accepting saves")
-                )
-                return receipt
-
-            pending_save = self.pending.get(key)
-
-            if pending_save is None:
-                if len(self.pending) >= self.pending_key_limit:
-                    receipt.complete(
-                        False,
-                        RuntimeError("persistence queue is full")
-                    )
-                    return receipt
-
-                pending_save = PendingSave(encoded_state)
-                self.pending[key] = pending_save
+                rejection = RuntimeError("writer is not accepting saves")
             else:
-                pending_save.encoded_state = encoded_state
-                self.pending.move_to_end(key)
+                pending_save = self.pending.get(key)
 
-            pending_save.completions.append(
-                (receipt, completion, encoded_state)
-            )
-            self.condition.notify_all()
+                if pending_save is None:
+                    if len(self.pending) >= self.pending_key_limit:
+                        rejection = RuntimeError(
+                            "persistence queue is full"
+                        )
+                    else:
+                        pending_save = PendingSave(encoded_state)
+                        self.pending[key] = pending_save
+                else:
+                    pending_save.encoded_state = encoded_state
+                    self.pending.move_to_end(key)
+
+                if rejection is None:
+                    pending_save.completions.append(
+                        (receipt, completion, encoded_state)
+                    )
+                    self.condition.notify_all()
+
+        if rejection is not None:
+            receipt.complete(False, rejection)
+
+            if completion is not None:
+                try:
+                    completion(False, rejection, encoded_state)
+                except Exception:
+                    pass
 
         return receipt
 
@@ -271,3 +283,119 @@ class AutosaveCoordinator(object):
             "busy": self.busy,
             "failed": self.failed
         }
+
+
+class WorldSaveCoordinator(object):
+    """Dirty-only autosave and final-save bookkeeping for shared world state."""
+
+    def __init__(
+        self,
+        village_state,
+        persistence_writer,
+        persisted_state=None,
+        interval=AUTOSAVE_INTERVAL_SECONDS,
+        time_source=None
+    ):
+        if interval <= 0:
+            raise ValueError("world autosave interval must be positive")
+
+        self.village_state = village_state
+        self.persistence_writer = persistence_writer
+        self.interval = float(interval)
+        self.time_source = time_source or time.monotonic
+        self.next_run_at = self.time_source() + self.interval
+        self.lock = threading.RLock()
+        self.persisted_state = persisted_state
+        self.last_submitted_state = persisted_state
+        self.last_receipt = None
+        self.last_error = None
+        self.runs = 0
+        self.queued = 0
+        self.unchanged = 0
+        self.failed = 0
+
+    def _save_completed(self, success, error, requested_state):
+        with self.lock:
+            if success:
+                self.persisted_state = requested_state
+                self.last_error = None
+            else:
+                self.last_error = error
+
+                if self.last_submitted_state == requested_state:
+                    self.last_submitted_state = self.persisted_state
+
+    def save_if_changed(self, wait=False, timeout=GRACEFUL_FLUSH_SECONDS):
+        try:
+            encoded_state = serialize_world_state(self.village_state)
+        except WorldStateError as error:
+            with self.lock:
+                self.last_error = error
+            return "failed"
+
+        wait_for_existing = None
+
+        with self.lock:
+            if encoded_state == self.last_submitted_state:
+                wait_for_existing = self.last_receipt
+
+                if wait_for_existing is None or not wait:
+                    return "unchanged"
+            else:
+                self.last_submitted_state = encoded_state
+                receipt = self.persistence_writer.submit(
+                    "village",
+                    encoded_state,
+                    completion=self._save_completed
+                )
+                self.last_receipt = receipt
+
+                if receipt.event.is_set() and not receipt.success:
+                    self.last_error = receipt.error
+                    return "failed"
+                wait_for_existing = receipt
+
+                if not wait:
+                    return "queued"
+
+        if wait_for_existing.wait(timeout):
+            return "saved"
+
+        if wait_for_existing.event.is_set():
+            return "failed"
+
+        return "timeout"
+
+    def tick(self, now=None, force=False):
+        if now is None:
+            now = self.time_source()
+
+        if not force and now < self.next_run_at:
+            return False
+
+        self.next_run_at = now + self.interval
+        self.runs += 1
+        result = self.save_if_changed(wait=False)
+
+        if result == "queued":
+            self.queued += 1
+        elif result == "unchanged":
+            self.unchanged += 1
+        else:
+            self.failed += 1
+
+        return True
+
+    def status_snapshot(self):
+        with self.lock:
+            return {
+                "interval": self.interval,
+                "next_run_at": self.next_run_at,
+                "runs": self.runs,
+                "queued": self.queued,
+                "unchanged": self.unchanged,
+                "failed": self.failed,
+                "last_error": None if self.last_error is None else str(
+                    self.last_error
+                )
+            }

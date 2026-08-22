@@ -23,7 +23,8 @@ from server_runtime import SelectorMudServer
 from persistence_runtime import (
     AutosaveCoordinator,
     GRACEFUL_FLUSH_SECONDS,
-    PersistenceWriter
+    PersistenceWriter,
+    WorldSaveCoordinator
 )
 from status_runtime import STATUS_INTERVAL_SECONDS, StatusCoordinator
 from telnet_parser import (
@@ -46,6 +47,13 @@ from player_state import (
     restore_player_state,
     serialize_player_state
 )
+from world_state import (
+    MAX_WORLD_STATE_BYTES,
+    WorldStateError,
+    new_world_state_json,
+    restore_world_state,
+    validate_world_state_json
+)
 
 USERS_DB = 'users.sqlite'
 HOST = "0.0.0.0"
@@ -67,6 +75,8 @@ ADMIN_PASSWORD_HASH = None
 PERSISTENCE_WRITER = None
 AUTOSAVE_COORDINATOR = None
 STATUS_COORDINATOR = None
+WORLD_STATE_WRITER = None
+WORLD_SAVE_COORDINATOR = None
 
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 600000
@@ -201,6 +211,20 @@ def init_user_database():
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS world_state (
+                state_key TEXT PRIMARY KEY,
+                json_state TEXT NOT NULL
+            )
+        """)
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO world_state (state_key, json_state)
+            VALUES (?, ?)
+            """,
+            ("village", new_world_state_json())
+        )
+
         connection.commit()
 
     finally:
@@ -330,10 +354,61 @@ def update_user_state(username, encoded_state):
         connection.close()
 
 
+def load_world_state(state_key="village"):
+    connection = sqlite3.connect(USERS_DB)
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "SELECT json_state FROM world_state WHERE state_key=?",
+            (state_key,)
+        )
+        row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        return row[0]
+    finally:
+        connection.close()
+
+
+def update_world_state(state_key, encoded_state):
+    if state_key != "village":
+        raise WorldStateError("unknown world-state key")
+
+    validate_world_state_json(encoded_state)
+
+    if len(encoded_state.encode("utf-8")) > MAX_WORLD_STATE_BYTES:
+        raise WorldStateError("world state is too large")
+
+    connection = sqlite3.connect(USERS_DB)
+
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "UPDATE world_state SET json_state=? WHERE state_key=?",
+            (encoded_state, state_key)
+        )
+
+        if cursor.rowcount != 1:
+            raise WorldStateError("cannot save unknown world state")
+
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def persist_user_state(username, encoded_state):
     """Write one validated player snapshot through the shared DB lock."""
     with USERS_LOCK:
         update_user_state(username, encoded_state)
+
+
+def persist_world_state(state_key, encoded_state):
+    """Write one validated world snapshot through the shared DB lock."""
+    with USERS_LOCK:
+        update_world_state(state_key, encoded_state)
 
 
 def active_sessions_snapshot():
@@ -613,18 +688,17 @@ class Session(object):
                     self.last_save_error = None
                     return "queued"
 
+                self.last_submitted_state_json = encoded_state
                 receipt = writer.submit(
                     username,
                     encoded_state,
                     self._save_completed
                 )
+                self.last_save_receipt = receipt
 
                 if receipt.event.is_set() and not receipt.success:
                     self.last_save_error = receipt.error
                     return "failed"
-
-                self.last_submitted_state_json = encoded_state
-                self.last_save_receipt = receipt
 
         if wait_for_existing is not None:
             if wait_for_existing.wait(timeout):
@@ -1377,6 +1451,9 @@ class World(object):
         self.rooms[room.room_id] = room
         return room
 
+    def synchronize_persisted_state(self):
+        self.rooms["village_green"].synchronize_persisted_state()
+
     def build(self):
         square = self.add_room(
             Room(
@@ -1947,6 +2024,8 @@ def main():
     global PERSISTENCE_WRITER
     global AUTOSAVE_COORDINATOR
     global STATUS_COORDINATOR
+    global WORLD_STATE_WRITER
+    global WORLD_SAVE_COORDINATOR
 
     try:
         host, port = configured_server_address()
@@ -1956,10 +2035,37 @@ def main():
 
     init_user_database()
 
+    stored_world_state = load_world_state()
+    world_state_valid = True
+
+    try:
+        restore_world_state(WORLD.village_state, stored_world_state)
+    except WorldStateError as error:
+        world_state_valid = False
+        restore_world_state(WORLD.village_state, new_world_state_json())
+        sys.stderr.write(
+            "Invalid saved world state; using safe defaults: {0}\n".format(
+                error
+            )
+        )
+
+    WORLD.synchronize_persisted_state()
+
     PERSISTENCE_WRITER = PersistenceWriter(persist_user_state)
     PERSISTENCE_WRITER.start()
+    WORLD_STATE_WRITER = PersistenceWriter(
+        persist_world_state,
+        pending_key_limit=1,
+        thread_name="blingmud-world-persistence"
+    )
+    WORLD_STATE_WRITER.start()
     AUTOSAVE_COORDINATOR = AutosaveCoordinator(active_sessions_snapshot)
     STATUS_COORDINATOR = StatusCoordinator(active_sessions_snapshot)
+    WORLD_SAVE_COORDINATOR = WorldSaveCoordinator(
+        WORLD.village_state,
+        WORLD_STATE_WRITER,
+        persisted_state=stored_world_state if world_state_valid else None
+    )
 
     if os.path.exists("admin.hash"):
         with open("admin.hash", "r") as f:
@@ -1985,6 +2091,7 @@ def main():
         begin_selector_connection
     )
     server.add_maintenance_callback(STATUS_COORDINATOR.tick)
+    server.add_maintenance_callback(WORLD_SAVE_COORDINATOR.tick)
     server.add_maintenance_callback(AUTOSAVE_COORDINATOR.tick)
 
     try:
@@ -1992,9 +2099,12 @@ def main():
     except OSError as error:
         server.server_close()
         PERSISTENCE_WRITER.shutdown(GRACEFUL_FLUSH_SECONDS)
+        WORLD_STATE_WRITER.shutdown(GRACEFUL_FLUSH_SECONDS)
         PERSISTENCE_WRITER = None
         AUTOSAVE_COORDINATOR = None
         STATUS_COORDINATOR = None
+        WORLD_STATE_WRITER = None
+        WORLD_SAVE_COORDINATOR = None
         sys.stderr.write("Could not bind BlingMUD listener: {0}\n".format(error))
         return 1
 
@@ -2040,6 +2150,19 @@ def main():
             )
 
         remaining = max(0.0, deadline - time.monotonic())
+        world_save_result = WORLD_SAVE_COORDINATOR.save_if_changed(
+            wait=True,
+            timeout=remaining
+        )
+
+        if world_save_result not in ("saved", "unchanged"):
+            sys.stderr.write(
+                "World-state final save did not finish successfully: {0}.\n".format(
+                    world_save_result
+                )
+            )
+
+        remaining = max(0.0, deadline - time.monotonic())
 
         if not PERSISTENCE_WRITER.flush(remaining):
             sys.stderr.write(
@@ -2053,9 +2176,25 @@ def main():
                 "Persistence writer did not stop within ten seconds.\n"
             )
 
+        remaining = max(0.0, deadline - time.monotonic())
+
+        if not WORLD_STATE_WRITER.flush(remaining):
+            sys.stderr.write(
+                "World-state flush did not finish within ten seconds.\n"
+            )
+
+        remaining = max(0.0, deadline - time.monotonic())
+
+        if not WORLD_STATE_WRITER.shutdown(remaining):
+            sys.stderr.write(
+                "World-state writer did not stop within ten seconds.\n"
+            )
+
         PERSISTENCE_WRITER = None
         AUTOSAVE_COORDINATOR = None
         STATUS_COORDINATOR = None
+        WORLD_STATE_WRITER = None
+        WORLD_SAVE_COORDINATOR = None
 
     return 0
 

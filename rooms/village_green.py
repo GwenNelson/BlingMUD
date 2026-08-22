@@ -82,6 +82,14 @@ class VillageGreen(Room):
 
         return restored
 
+    def synchronize_persisted_state(self):
+        """Reconcile the durable Wisp presence with the room's NPC list."""
+        if self.village_state.wisp_is_present():
+            if self.wisp_mother.room is not self:
+                self.add_npc(self.wisp_mother)
+        elif self.wisp_mother.room is self:
+            self.remove_npc(self.wisp_mother)
+
     def description_for(self, player):
         self._refresh_wisp_mother()
         wisp_present = self.village_state.wisp_is_present()

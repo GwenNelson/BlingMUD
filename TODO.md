@@ -48,6 +48,7 @@ Core engine
 ☒ Replace both input paths with one bounded incremental Telnet/UTF-8 parser covering fragmented negotiation/subnegotiation, escaped IAC, CR-LF/CR-NUL/LF, Unicode backspace, unsafe terminal/bidi controls, and explicit Tab events.
 ☒ Add 60-second autosave that compares bounded serialized snapshots, skips busy state locks without blocking selector I/O, and submits changed characters only.
 ☒ Route selector-era character writes through one 64-key bounded, per-player coalescing persistence writer; retry after failures and wait for a queued final snapshot on disconnect.
+☒ Make immediate persistence-queue rejection notify bookkeeping callbacks so rejected character/world snapshots remain retryable.
 ☒ Give graceful shutdown one ten-second gameplay/persistence deadline and report workers or writes that do not finish instead of waiting indefinitely.
 ☐ Add persistent IDs and templates for rooms, items, and world objects where needed.
   ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat, royal possum bottle cap, giant acorn, Val's healing potion, Valkyrie mead, and horn-born special.
@@ -113,14 +114,15 @@ Village content
 ☒ Decay online intoxication by one point per whole minute without blocking selector I/O or allowing backwards clocks to increase it.
 ☐ Persist recent-collapse state and a bounded wall-clock status timestamp in character schema version 2 so intoxication can also decay safely while offline.
 ☒ Add the initial Village Green and Hanging Tree canopy with `/up`/`/down`, day/night Wisp descriptions, both acorn harvest verbs, bounded giant-acorn supply, and a room-aware low-harvest bonking hazard.
-☐ Make canopy supply renewable and persist shared village ecology across restarts without enabling unbounded item creation.
+☒ Persist bounded acorn supply/danger/harvest totals and Wisp ward/absence/harm state across restarts using strict version-1 world JSON and a one-key asynchronous writer.
+☐ Make canopy supply renewable across time without enabling unbounded item creation.
 ☐ Add Master Corbel, Acorn Goblets, and Acorn Mash.
 ☐ Add the Smithereens, Eisele, and Tackdriver.
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects.
 ☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec.
 ☒ Add the non-verbal Wisp Mother with examine, one-hit protection, removal, prolonged darkness, recovery, and shared harm state.
 ☒ Make Val react to Wisp Mother harm through shared runtime state when the next player enters the tavern.
-☐ Make the remaining villagers react to Wisp Mother harm and persist the shared consequence across restarts.
+☐ Make the remaining villagers react to the now-durable Wisp Mother harm consequence.
 
 Future
 

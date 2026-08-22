@@ -286,6 +286,27 @@ class SessionAutosaveTests(unittest.TestCase):
         finally:
             writer.shutdown(1.0)
 
+    def test_immediate_writer_rejection_does_not_poison_retry_state(self):
+        writer = PersistenceWriter(lambda username, encoded: None)
+        session, player = self._make_session(writer)
+        player.fabulousness = 29
+
+        self.assertEqual(session.save_if_changed(), "failed")
+        self.assertEqual(
+            session.last_submitted_state_json,
+            session.persisted_state_json
+        )
+
+        writer.start()
+
+        try:
+            self.assertEqual(
+                session.save_if_changed(wait=True, timeout=1.0),
+                "queued"
+            )
+        finally:
+            writer.shutdown(1.0)
+
     def test_disconnect_waits_for_final_snapshot_before_room_leave(self):
         writer = PersistenceWriter(blingmud.persist_user_state)
         writer.start()
