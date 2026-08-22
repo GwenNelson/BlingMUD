@@ -3,6 +3,8 @@ import time
 import traceback
 import sys
 import random
+import math
+import unicodedata
 
 TICK_DELAY = 3.0
 NPC_ACTION_MAX_TEXT_LENGTH = 1000
@@ -349,7 +351,7 @@ class NPCAction(object):
             raise ValueError("NPC action text is too long")
 
         for character in text:
-            if ord(character) < 32 or ord(character) == 127:
+            if unicodedata.category(character) in ("Cc", "Cf", "Cs"):
                 raise ValueError("NPC action text contains control characters")
 
     @classmethod
@@ -516,11 +518,18 @@ class SimpleRandomBehavior(NPCBehavior):
         if now < self.next_action_time:
             return None
 
-        if self.npc.room is None:
+        npc = self.npc
+
+        if npc is None:
             return None
 
-        with self.npc.room.lock:
-            room_has_players = bool(self.npc.room.players)
+        room = npc.room
+
+        if room is None:
+            return None
+
+        with room.lock:
+            room_has_players = npc.room is room and bool(room.players)
 
         if not room_has_players:
             return None
@@ -528,6 +537,377 @@ class SimpleRandomBehavior(NPCBehavior):
         action = self._choose_ambient_action()
         self._schedule_next_action()
         return action
+
+
+class FSMBehavior(NPCBehavior):
+    """A validated finite-state machine described by ordinary data."""
+
+    mode = NPCBehavior.MODE_FSM
+
+    EVENT_PLAYER_ENTER = "player_enter"
+    EVENT_PLAYER_LEAVE = "player_leave"
+    EVENT_SAY = "say"
+    EVENT_EMOTE = "emote"
+    EVENT_TICK = "tick"
+
+    VALID_EVENTS = (
+        EVENT_PLAYER_ENTER,
+        EVENT_PLAYER_LEAVE,
+        EVENT_SAY,
+        EVENT_EMOTE,
+        EVENT_TICK
+    )
+
+    STATE_KEYS = ("on_enter", "on_exit", "events", "timeout")
+    TRANSITION_KEYS = ("target", "actions", "condition", "handler")
+    TIMEOUT_KEYS = (
+        "after",
+        "target",
+        "actions",
+        "condition",
+        "handler"
+    )
+
+    def __init__(self, states, initial_state, time_source=None):
+        NPCBehavior.__init__(self)
+
+        self.time_source = time_source or time.time
+        self.states = self._validate_states(states)
+
+        if initial_state not in self.states:
+            raise ValueError("initial FSM state does not exist")
+
+        self.initial_state = initial_state
+        self.current_state = initial_state
+        self.entered_state_at = None
+        self.next_transition_time = None
+        self._pending_actions = ()
+        self._state_lock = threading.RLock()
+
+    def _validate_states(self, states):
+        if not isinstance(states, dict) or not states:
+            raise ValueError("FSM states must be a non-empty dictionary")
+
+        state_names = set(states.keys())
+        normalized = {}
+
+        for state_name, definition in states.items():
+            if not isinstance(state_name, str) or not state_name:
+                raise ValueError("FSM state names must be non-empty strings")
+
+            if not isinstance(definition, dict):
+                raise TypeError("FSM state definitions must be dictionaries")
+
+            unknown_keys = set(definition.keys()) - set(self.STATE_KEYS)
+
+            if unknown_keys:
+                raise ValueError("unsupported FSM state setting")
+
+            events = definition.get("events", {})
+
+            if not isinstance(events, dict):
+                raise TypeError("FSM events must be a dictionary")
+
+            normalized_events = {}
+
+            for event_name, transitions in events.items():
+                if event_name not in self.VALID_EVENTS:
+                    raise ValueError("unsupported FSM event")
+
+                normalized_events[event_name] = self._validate_transitions(
+                    transitions,
+                    state_names
+                )
+
+            timeout_delay = None
+            timeout_transition = None
+            timeout = definition.get("timeout")
+
+            if timeout is not None:
+                if not isinstance(timeout, dict):
+                    raise TypeError("FSM timeout must be a dictionary")
+
+                unknown_timeout_keys = (
+                    set(timeout.keys()) - set(self.TIMEOUT_KEYS)
+                )
+
+                if unknown_timeout_keys or "after" not in timeout:
+                    raise ValueError("invalid FSM timeout definition")
+
+                timeout_delay = self._validate_delay(timeout["after"])
+                timeout_definition = dict(timeout)
+                del timeout_definition["after"]
+                timeout_transition = self._validate_transition(
+                    timeout_definition,
+                    state_names
+                )
+
+            normalized[state_name] = {
+                "on_enter": self._validate_actions(
+                    definition.get("on_enter", ())
+                ),
+                "on_exit": self._validate_actions(
+                    definition.get("on_exit", ())
+                ),
+                "events": normalized_events,
+                "timeout_delay": timeout_delay,
+                "timeout_transition": timeout_transition
+            }
+
+        return normalized
+
+    def _validate_delay(self, delay):
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)):
+            raise TypeError("FSM timeout delay must be a number")
+
+        if delay < 0 or not math.isfinite(delay):
+            raise ValueError("FSM timeout delay must be finite and non-negative")
+
+        return float(delay)
+
+    def _validate_actions(self, actions):
+        if actions is None:
+            return ()
+
+        if isinstance(actions, NPCAction):
+            actions = (actions,)
+
+        if not isinstance(actions, (list, tuple)):
+            raise TypeError("FSM actions must be NPCAction instances")
+
+        result = tuple(actions)
+
+        for action in result:
+            if not isinstance(action, NPCAction):
+                raise TypeError("FSM actions must be NPCAction instances")
+
+            action.validate()
+
+        return result
+
+    def _validate_transitions(self, transitions, state_names):
+        if isinstance(transitions, dict):
+            transitions = (transitions,)
+
+        if not isinstance(transitions, (list, tuple)) or not transitions:
+            raise ValueError("FSM event needs at least one transition")
+
+        return tuple(
+            self._validate_transition(transition, state_names)
+            for transition in transitions
+        )
+
+    def _validate_transition(self, transition, state_names):
+        if not isinstance(transition, dict):
+            raise TypeError("FSM transitions must be dictionaries")
+
+        unknown_keys = set(transition.keys()) - set(self.TRANSITION_KEYS)
+
+        if unknown_keys:
+            raise ValueError("unsupported FSM transition setting")
+
+        target = transition.get("target")
+
+        if target is not None and target not in state_names:
+            raise ValueError("FSM transition target does not exist")
+
+        condition = transition.get("condition")
+
+        if condition is not None and not callable(condition):
+            raise TypeError("FSM transition condition must be callable")
+
+        handler = transition.get("handler")
+
+        if handler is not None and not callable(handler):
+            raise TypeError("FSM transition handler must be callable")
+
+        return {
+            "target": target,
+            "actions": self._validate_actions(
+                transition.get("actions", ())
+            ),
+            "condition": condition,
+            "handler": handler
+        }
+
+    def bind(self, npc):
+        NPCBehavior.bind(self, npc)
+
+        with self._state_lock:
+            self.current_state = self.initial_state
+            self.entered_state_at = self.time_source()
+            self._pending_actions = self.states[
+                self.current_state
+            ]["on_enter"]
+            self._schedule_timeout()
+
+    def _schedule_timeout(self):
+        state = self.states[self.current_state]
+        delay = state["timeout_delay"]
+
+        if delay is None:
+            self.next_transition_time = None
+        else:
+            self.next_transition_time = self.time_source() + delay
+
+    def set_state(self, state_name, queue_entry_actions=False):
+        if state_name not in self.states:
+            raise ValueError("FSM state does not exist")
+
+        with self._state_lock:
+            self.current_state = state_name
+            self.entered_state_at = self.time_source()
+
+            if queue_entry_actions:
+                self._pending_actions = self.states[
+                    state_name
+                ]["on_enter"]
+            else:
+                self._pending_actions = ()
+
+            self._schedule_timeout()
+
+    def _room_is_active(self):
+        npc = self.npc
+
+        if npc is None:
+            return False
+
+        room = npc.room
+
+        if room is None:
+            return False
+
+        with room.lock:
+            return npc.room is room and bool(room.players)
+
+    def _transition_matches(self, transition, context):
+        condition = transition["condition"]
+
+        if condition is None:
+            return True
+
+        return bool(condition(self, context))
+
+    def _apply_transition(self, transition, context, timed=False):
+        actions = list(self._pending_actions)
+        self._pending_actions = ()
+
+        if not self._transition_matches(transition, context):
+            if timed:
+                self._schedule_timeout()
+            return tuple(actions), False
+
+        target = transition["target"]
+        handler = transition["handler"]
+
+        if handler is not None:
+            actions.extend(
+                self._validate_actions(handler(self, context))
+            )
+
+        if target is None:
+            actions.extend(transition["actions"])
+
+            if timed:
+                self._schedule_timeout()
+
+            return tuple(actions), True
+
+        old_state = self.states[self.current_state]
+        actions.extend(old_state["on_exit"])
+        actions.extend(transition["actions"])
+        self.current_state = target
+        self.entered_state_at = self.time_source()
+        new_state = self.states[self.current_state]
+        actions.extend(new_state["on_enter"])
+        self._schedule_timeout()
+        return tuple(actions), True
+
+    def _handle_event(self, event_name, player=None, text=None):
+        context = {
+            "event": event_name,
+            "player": player,
+            "text": text
+        }
+
+        with self._state_lock:
+            transitions = self.states[
+                self.current_state
+            ]["events"].get(event_name, ())
+
+            if not transitions:
+                actions = self._pending_actions
+                self._pending_actions = ()
+                return actions
+
+            prefix = self._pending_actions
+            self._pending_actions = ()
+
+            for transition in transitions:
+                actions, matched = self._apply_transition(
+                    transition,
+                    context
+                )
+
+                if matched:
+                    return prefix + actions
+
+            return prefix
+
+    def on_player_enter(self, player):
+        return self._handle_event(self.EVENT_PLAYER_ENTER, player=player)
+
+    def on_player_leave(self, player):
+        return self._handle_event(self.EVENT_PLAYER_LEAVE, player=player)
+
+    def on_say(self, player, text):
+        return self._handle_event(
+            self.EVENT_SAY,
+            player=player,
+            text=text
+        )
+
+    def on_emote(self, player, action):
+        return self._handle_event(
+            self.EVENT_EMOTE,
+            player=player,
+            text=action
+        )
+
+    def tick(self):
+        if not self._room_is_active():
+            return None
+
+        with self._state_lock:
+            now = self.time_source()
+            state = self.states[self.current_state]
+
+            if (
+                self.next_transition_time is not None
+                and now >= self.next_transition_time
+            ):
+                context = {
+                    "event": "timeout",
+                    "player": None,
+                    "text": None
+                }
+                actions, matched = self._apply_transition(
+                    state["timeout_transition"],
+                    context,
+                    timed=True
+                )
+                return actions
+
+        return self._handle_event(self.EVENT_TICK)
+
+    def state_snapshot(self):
+        with self._state_lock:
+            return {
+                "state": self.current_state,
+                "entered_state_at": self.entered_state_at,
+                "next_transition_time": self.next_transition_time
+            }
 
 
 
@@ -580,9 +960,23 @@ class NPCManager(object):
        self.running = True
        self._ticker_thread.start()
    
-   def stop(self):
+   def stop(self, timeout=None):
        self.running = False
-       self._ticker_thread.join()
+
+       if not self._ticker_thread.is_alive():
+           return
+
+       if timeout is None:
+           timeout = TICK_DELAY + 1.0
+
+       self._ticker_thread.join(timeout)
+
+       if self._ticker_thread.is_alive():
+           sys.stderr.write(
+               "NPC ticker did not stop within {0:.1f} seconds.\n".format(
+                   timeout
+               )
+           )
 
 
 class NPC(Entity):

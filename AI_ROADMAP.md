@@ -24,21 +24,28 @@ First fixes
 - [done] Replace persistent unsalted SHA-256 password storage with salted PBKDF2-SHA256 hashes, while accepting and automatically upgrading legacy user and admin hashes after successful authentication.
 - [done] Write `admin.hash` with owner-only permissions and compare password digests using constant-time comparison.
 - [done] Unregister NPCs from `NPCManager` when they leave a room so removed NPCs do not remain in the global tick list indefinitely.
+- [done] Remove Brave Sir Knight's unbounded retry-until-different dialogue loop; degenerate random sources and one-entry pools now complete in bounded time without losing immediate-repeat suppression when alternatives exist.
+- [done] Bound the Knight concurrency test's barrier and thread joins, and add `run_tests.py` as the required 30-second subprocess watchdog so a regression cannot silently consume a CPU core indefinitely.
+- [done] Make random and FSM behaviors tolerate being detached or moved during a tick, reject Unicode terminal and bidirectional controls in structured NPC output, and prevent a backwards wall-clock adjustment from increasing the Knight's fire strength.
+- [done] Make `NPCManager.stop()` use a finite join and safely tolerate being called before startup, so shutdown cannot wait forever on a stuck ticker callback; runtime isolation of a non-returning callback remains a scheduler task.
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, stronger password storage with legacy migration, NPC-manager removal cleanup, the shared NPC behavior/event-dispatch contract, validated structured speech/emote actions, reusable local random behavior, Brave Sir Knight's compatibility migration onto the contract, and regression coverage for all of them.
-- Still planned: the data-backed FSM implementation, OpenRouter failover, room-aware scheduling, gameplay-state persistence hardening, admin tooling, transport security, and the village content from the email threads.
+- Implemented now: the first-fix engine bugs above, stronger password storage with legacy migration, NPC-manager removal cleanup, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, and regression coverage for all of them.
+- Still planned: optional structured NPC memory, the `llm_fsm` advisory wrapper and OpenRouter failover, room-aware global scheduling, gameplay-state persistence hardening, admin tooling, transport security, and the village content from the email threads.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 
 NPC architecture
 
-- Implemented foundation: `NPCBehavior` now owns the common enter, leave, speech, emote, and tick contract; `NPC` delegates those hooks to its bound behavior; rooms now deliver speech and emote observations; one broken NPC is isolated from other event recipients and ticker participants; behavior output can contain one or more validated speech/emote `NPCAction` objects; `SimpleRandomBehavior` provides timed local chatter and optional event reactions; and Brave Sir Knight runs his existing hand-authored FSM through an explicitly declared `fsm` behavior adapter.
-- Still planned in this layer: reusable data-backed FSM definitions, additional validated action types as game mechanics require them, optional structured memory, activation/deactivation events, and the `llm_fsm` advisory wrapper. Brave Sir Knight's state machine remains hand-authored during the compatibility stage and should become the regression fixture for the generic FSM implementation.
-- [done: contract stage] Extract a generic NPC behavior contract from the existing Brave Sir Knight implementation so NPCs can declare simple random, deterministic FSM, or LLM-assisted modes; the reusable FSM and LLM-assisted implementations remain planned.
-- [partial: compatibility stage] Treat Brave Sir Knight as the first concrete migration target: his current state machine behavior now runs through the shared contract, but it still needs to be expressed through the reusable data-backed FSM layer instead of its bespoke procedural implementation.
+- Implemented foundation: `NPCBehavior` now owns the common enter, leave, speech, emote, and tick contract; `NPC` delegates those hooks to its bound behavior; rooms now deliver speech and emote observations; raised callback failures are isolated from other event recipients and ticker participants; behavior output can contain one or more validated speech/emote `NPCAction` objects; `SimpleRandomBehavior` provides timed local chatter and optional event reactions; and `FSMBehavior` provides validated named states, ordered enter/exit/transition actions, event transitions, conditional branches, active-room timers, trusted state-local handlers, controlled state selection, and inspectable timing state.
+- Known limitation: trusted local NPC callbacks still execute sequentially on the global ticker, so code that never returns can stall later NPC ticks even though raised exceptions are isolated. Avoid unbounded behavior code now; the room-aware scheduler milestone must add cooperative execution deadlines, busy-state suppression, or equivalent isolation without spawning unlimited replacement threads.
+- Brave Sir Knight is now migrated: `BraveSirKnight` is a thin world entity backed by `BraveSirKnightBehavior(FSMBehavior)`. Its five validated top-level states are data-backed, while the character's complex state-local patrol, greeting, water, fire, and wood sequences run as trusted FSM handlers and return structured `NPCAction` output. This is an intentional hybrid rather than a claim that every chore substep is declarative.
+- The migration is guarded by a dedicated characterization suite covering identity and resources, timing and empty-room behavior, every state and resource-priority branch, random and directional dialogue pools, repeat suppression, first/returning/Lady Gwen greetings, complete chore sequences and failure paths, memory and farewells, no-op observations, invalid-state recovery, and concurrent action-buffer isolation. Preserve these observable behaviors unless a deliberate product change also updates the tests and roadmap.
+- Still planned in this layer: additional validated action types as game mechanics require them, optional structured memory, activation/deactivation events, and the `llm_fsm` advisory wrapper.
+- [done: local behavior stage] Extract a generic NPC behavior contract from the existing Brave Sir Knight implementation and provide reusable simple-random and deterministic FSM modes; the LLM-assisted wrapper remains planned.
+- [done: migration stage] Brave Sir Knight now runs as `BraveSirKnightBehavior(FSMBehavior)` with a validated five-state graph, behavior-owned state/content, trusted state-local handlers for its detailed sequences, structured action output, and a thin `NPC` entity wrapper.
 - [done] Make “random utterance NPCs” the simplest possible behavior class: `SimpleRandomBehavior` supports weighted ambient speech/emote pools, timed output, optional local event reactions, no state machine, and no LLM.
-- Make FSM NPCs data-driven: states, transitions, timers, enter/leave hooks, and event reactions should all be describable without rewriting engine code.
+- [done: engine stage] Make FSM NPCs data-backed: `FSMBehavior` validates state graphs, targets, timers, actions, trusted callable conditions, and trusted handlers without evaluating configuration strings.
 - Make LLM NPCs an optional wrapper, not the authority: the LLM should propose structured actions and text, while the engine still validates them against the NPC’s current state and allowed event set.
 - Keep the current `on_player_enter`, `on_player_leave`, `on_say`, `on_emote`, and `tick` hooks, but route them through a single behavior interface so each NPC can choose its execution style.
 - Preserve NPC memory as structured data, but keep it separate from behavior so a simple NPC can have no memory and a tavern NPC can have rich memory without special-casing the engine.
@@ -380,9 +387,9 @@ Implementation order by system
   - keep auth and gameplay state distinct
 - Core NPC engine:
   - [done: contract stage] abstract the behavior interface
-  - [partial: compatibility stage] migrate Brave Sir Knight onto it; generic FSM conversion remains
+  - [done: migration stage] migrate Brave Sir Knight onto the reusable FSM while preserving his observable behavior
   - [done] add simple random NPC behavior
-  - add FSM NPCs
+  - [done: engine stage] add reusable FSM NPC behavior
 - LLM layer:
   - add OpenRouter adapter
   - define structured JSON event output
@@ -422,7 +429,7 @@ Definitions
 Implementation order
 
 - Phase 1: fix the two concrete bugs, formalize player state persistence, and add the minimum save/load layer.
-- Phase 2: extract the generic NPC behavior system, migrate Brave Sir Knight onto it, and add the room-aware scheduler with empty-room suspension.
+- Phase 2: [partial] the generic NPC behavior system and Brave Sir Knight migration are complete; the room-aware global scheduler with empty-room suspension remains planned.
 - Phase 3: add OpenRouter integration, circuit breaker failover, structured JSON output, and priority budgeting for LLM-capable NPCs.
 - Phase 4: add admin/ops commands for NPC mode control, health checks, state inspection, and reloads.
 - Phase 5: implement the village content as data-driven rooms, NPCs, items, room triggers, and status effects.
@@ -431,6 +438,8 @@ Implementation order
 Test plan
 
 - Regression test the `handle_command` bug and the wearable-slot bug directly.
+- Preserve the Brave Sir Knight characterization suite as a migration and future-refactor contract: it must cover every top-level state, chore sequence, greeting and farewell branch, resource decision, directional observation pool, memory behavior, invalid-state recovery, timing rule, empty-room rule, and concurrent event isolation.
+- Run the suite through `python3 run_tests.py`, retain its finite subprocess watchdog, and require every test-level barrier, condition wait, and thread join to have its own finite timeout.
 - Verify that an empty room causes no NPC ticks and no OpenRouter calls.
 - Verify that a populated room wakes NPCs correctly and that LLM calls are only made for eligible NPCs.
 - Verify failover from LLM to FSM on timeout, invalid JSON, or OpenRouter errors, and verify restoration after a healthy probe.
@@ -456,7 +465,7 @@ NPC behavior model
   - `fsm`: runs a named finite-state machine with state-local enter/exit handlers, transitions, timers, and event-triggered branches.
   - `llm_fsm`: behaves like an FSM first, but may consult an LLM as an advisory layer when the room is active and budget permits.
 - The engine should not treat “LLM NPC” as a separate species. It should treat it as an FSM-capable NPC with an optional brain provider.
-- The FSM should be portable enough that Brave Sir Knight can be expressed as a data-backed state machine rather than a one-off procedural class.
+- The reusable FSM is now portable enough to host Brave Sir Knight as a behavior-owned, data-backed top-level state graph; trusted handlers remain the supported extension point for character-specific multi-step mechanics.
 - The behavior API should expose:
   - room activation and deactivation
   - player enter / leave
@@ -721,18 +730,18 @@ What exists vs what is still planned
   - salted PBKDF2-SHA256 password hashes with successful-login migration from the legacy unsalted format
   - room objects with exits, items, players, and NPC lists
   - command registry
-  - Brave Sir Knight as a rich, hand-authored FSM-style NPC
+  - Brave Sir Knight as a rich `FSMBehavior`-backed NPC with five data-backed top-level states and trusted handlers for its detailed state-local sequences
   - a shared NPC behavior contract for enter, leave, speech, emote, and tick events
   - room delivery of player speech and emotes to NPC behaviors
   - validated, ordered speech/emote action output from NPC behaviors
   - reusable timed random chatter and event reactions with no LLM dependency
-  - Brave Sir Knight attached to the shared contract through an `fsm` compatibility behavior
+  - reusable data-backed FSM states, event transitions, timers, conditions, ordered actions, and state snapshots
+  - a dedicated Brave Sir Knight characterization suite preserving his patrol, greeting, chore, resource, dialogue, memory, farewell, timing, recovery, and concurrency behavior across the migration
   - Crossroads and Fabulous Chamber demo content
   - simple item/equipment model
   - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
   - persistent character state versioning and autosave
-  - data-backed FSM behavior implementation
   - empty-room suspension and room-aware scheduling
   - OpenRouter integration and LLM failover
   - budgeted NPC priority system
@@ -759,9 +768,9 @@ Milestone 1: stabilize the current engine
 Milestone 2: generalize NPC behavior
 
 - [done: foundation] Extract behavior modes into a shared abstraction and route all existing NPC hooks through it.
-- [done: compatibility stage] Preserve Brave Sir Knight’s current behavior while moving him onto the shared contract; his FSM definition is still procedural and must later be expressed through the generic FSM implementation.
+- [done: migration stage] Preserve Brave Sir Knight's behavior while moving him onto `FSMBehavior`; keep his five top-level states data-backed and his complex state-local sequences in trusted handlers unless a later change deliberately redesigns them.
 - [done] Add basic random-chatter NPC support.
-- Add data-backed FSM support.
+- [done: engine stage] Add data-backed FSM support, including trusted handlers for complex state-local mechanics.
 - [done] Make the engine expose enter/leave/say/emote/tick events through one contract.
 - Add NPC memory as structured state rather than ad hoc fields.
 

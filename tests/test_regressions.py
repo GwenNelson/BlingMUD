@@ -5,10 +5,13 @@ import os
 import stat
 import sys
 import tempfile
+from unittest import mock
 
 import blingmud
+import run_tests
 from core import (
     Item,
+    FSMBehavior,
     NPC,
     NPCAction,
     NPCBehavior,
@@ -29,6 +32,47 @@ class DummyRequest(object):
 
     def recv(self, size):
         return b""
+
+
+class TestRunnerRegressionTests(unittest.TestCase):
+    def test_runner_returns_child_status_and_uses_finite_timeout(self):
+        completed = mock.Mock(returncode=7)
+
+        with mock.patch.object(
+            run_tests.subprocess,
+            "run",
+            return_value=completed
+        ) as run:
+            result = run_tests.main()
+
+        self.assertEqual(result, 7)
+        run.assert_called_once_with(
+            run_tests.TEST_COMMAND,
+            timeout=run_tests.TEST_TIMEOUT_SECONDS
+        )
+
+    def test_runner_reports_and_returns_timeout_status(self):
+        timeout = run_tests.subprocess.TimeoutExpired(
+            run_tests.TEST_COMMAND,
+            run_tests.TEST_TIMEOUT_SECONDS
+        )
+        original_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+
+        try:
+            with mock.patch.object(
+                run_tests.subprocess,
+                "run",
+                side_effect=timeout
+            ):
+                result = run_tests.main()
+
+            message = sys.stderr.getvalue()
+        finally:
+            sys.stderr = original_stderr
+
+        self.assertEqual(result, 124)
+        self.assertIn("was terminated", message)
 
 
 class HandleCommandRegressionTests(unittest.TestCase):
@@ -159,6 +203,31 @@ class NPCManagerRegressionTests(unittest.TestCase):
         self.assertNotIn(npc, room.npcs)
         self.assertNotIn(npc, manager.npcs)
         self.assertIsNone(npc.room)
+
+    def test_manager_stop_uses_a_finite_join_and_tolerates_no_start(self):
+        manager = NPCManager()
+        manager.stop()
+
+        class FakeTickerThread(object):
+            def __init__(self):
+                self.alive = True
+                self.join_timeout = None
+
+            def is_alive(self):
+                return self.alive
+
+            def join(self, timeout):
+                self.join_timeout = timeout
+                self.alive = False
+
+        fake_thread = FakeTickerThread()
+        manager._ticker_thread = fake_thread
+        manager.running = True
+
+        manager.stop(timeout=0.25)
+
+        self.assertFalse(manager.running)
+        self.assertEqual(fake_thread.join_timeout, 0.25)
 
 
 class RecordingBehavior(NPCBehavior):
@@ -352,6 +421,12 @@ class NPCActionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             NPCAction.say("first line\nsecond line")
 
+        with self.assertRaises(ValueError):
+            NPCAction.say("terminal\u009bcontrol")
+
+        with self.assertRaises(ValueError):
+            NPCAction.say("right-to-left\u202eoverride")
+
         with self.assertRaises(TypeError):
             NPCAction.say(None)
 
@@ -519,6 +594,306 @@ class SimpleRandomBehaviorTests(unittest.TestCase):
         behavior = self._make_behavior(clock, speech="A complete sentence.")
 
         self.assertEqual(behavior.speech, ("A complete sentence.",))
+
+    def test_unbound_behavior_tick_is_inert(self):
+        clock = FakeClock(5.0)
+        behavior = self._make_behavior(clock, speech=("Hello.",))
+        npc = NPC("Local", behavior=behavior)
+
+        behavior.unbind(npc)
+
+        self.assertIsNone(behavior.tick())
+
+
+class FSMBehaviorTests(unittest.TestCase):
+    def _make_states(self):
+        return {
+            "idle": {
+                "on_enter": NPCAction.say("Standing by."),
+                "on_exit": NPCAction.emote("stands to attention."),
+                "events": {
+                    "player_enter": {
+                        "target": "greeting",
+                        "actions": NPCAction.emote("notices a visitor.")
+                    }
+                }
+            },
+            "greeting": {
+                "on_enter": NPCAction.say("Welcome, traveller."),
+                "timeout": {
+                    "after": 5.0,
+                    "target": "idle",
+                    "actions": NPCAction.emote("returns to their post.")
+                }
+            }
+        }
+
+    def _make_npc(self, clock, states=None, initial_state="idle"):
+        behavior = FSMBehavior(
+            states or self._make_states(),
+            initial_state,
+            time_source=clock
+        )
+        npc = NPC("Guard", behavior=behavior)
+        output = []
+        npc.speak = lambda text: output.append(("say", text))
+        npc.emote = lambda text: output.append(("emote", text))
+        return npc, behavior, output
+
+    def test_event_transition_orders_exit_transition_and_entry_actions(self):
+        clock = FakeClock(10.0)
+        npc, behavior, output = self._make_npc(clock)
+
+        npc.on_player_enter(Player("Visitor"))
+
+        self.assertEqual(behavior.current_state, "greeting")
+        self.assertEqual(behavior.next_transition_time, 15.0)
+        self.assertEqual(
+            output,
+            [
+                ("say", "Standing by."),
+                ("emote", "stands to attention."),
+                ("emote", "notices a visitor."),
+                ("say", "Welcome, traveller.")
+            ]
+        )
+
+    def test_timeout_waits_for_active_room_then_transitions(self):
+        clock = FakeClock(10.0)
+        npc, behavior, output = self._make_npc(
+            clock,
+            initial_state="greeting"
+        )
+        room = Room("fsm_test", "FSM Test", "A test room.")
+        room.add_npc(npc)
+
+        try:
+            clock.now = 15.0
+            npc.tick()
+            self.assertEqual(behavior.current_state, "greeting")
+            self.assertEqual(output, [])
+
+            room.players.append(Player("Visitor"))
+            npc.tick()
+
+            self.assertEqual(behavior.current_state, "idle")
+            self.assertEqual(
+                output,
+                [
+                    ("say", "Welcome, traveller."),
+                    ("emote", "returns to their post."),
+                    ("say", "Standing by.")
+                ]
+            )
+        finally:
+            room.remove_npc(npc)
+
+    def test_conditions_select_first_matching_transition(self):
+        clock = FakeClock()
+        states = {
+            "listening": {
+                "events": {
+                    "say": (
+                        {
+                            "condition": lambda behavior, event: (
+                                "hello" in event["text"].lower()
+                            ),
+                            "actions": NPCAction.say("Hello to you too.")
+                        },
+                        {
+                            "actions": NPCAction.say("I heard you.")
+                        }
+                    )
+                }
+            }
+        }
+        npc, behavior, output = self._make_npc(
+            clock,
+            states=states,
+            initial_state="listening"
+        )
+        player = Player("Visitor")
+
+        npc.on_say(player, "HELLO there")
+        npc.on_say(player, "Something else")
+
+        self.assertEqual(behavior.current_state, "listening")
+        self.assertEqual(
+            output,
+            [
+                ("say", "Hello to you too."),
+                ("say", "I heard you.")
+            ]
+        )
+
+    def test_state_snapshot_contains_serializable_timing_state(self):
+        clock = FakeClock(42.0)
+        npc, behavior, output = self._make_npc(clock)
+
+        self.assertEqual(
+            behavior.state_snapshot(),
+            {
+                "state": "idle",
+                "entered_state_at": 42.0,
+                "next_transition_time": None
+            }
+        )
+
+    def test_trusted_handler_can_produce_actions(self):
+        clock = FakeClock()
+        states = {
+            "idle": {
+                "events": {
+                    "say": {
+                        "handler": lambda behavior, event: NPCAction.say(
+                            "You said: {0}".format(event["text"])
+                        )
+                    }
+                }
+            }
+        }
+        npc, behavior, output = self._make_npc(
+            clock,
+            states=states,
+            initial_state="idle"
+        )
+
+        npc.on_say(Player("Visitor"), "hello")
+
+        self.assertEqual(output, [("say", "You said: hello")])
+
+    def test_controlled_state_selection_can_queue_entry_actions(self):
+        clock = FakeClock(5.0)
+        npc, behavior, output = self._make_npc(clock)
+
+        behavior.set_state("greeting", queue_entry_actions=True)
+        npc.on_say(Player("Visitor"), "hello")
+
+        self.assertEqual(behavior.current_state, "greeting")
+        self.assertEqual(output, [("say", "Welcome, traveller.")])
+
+    def test_unbound_behavior_tick_is_inert(self):
+        clock = FakeClock(5.0)
+        npc, behavior, output = self._make_npc(clock)
+
+        behavior.unbind(npc)
+
+        self.assertIsNone(behavior.tick())
+        self.assertEqual(output, [])
+
+    def test_invalid_fsm_definitions_are_rejected(self):
+        with self.assertRaises(ValueError):
+            FSMBehavior({}, "idle")
+
+        with self.assertRaises(ValueError):
+            FSMBehavior({"idle": {}}, "missing")
+
+        with self.assertRaises(ValueError):
+            FSMBehavior(
+                {
+                    "idle": {
+                        "events": {
+                            "say": {"target": "missing"}
+                        }
+                    }
+                },
+                "idle"
+            )
+
+        with self.assertRaises(ValueError):
+            FSMBehavior(
+                {
+                    "idle": {
+                        "events": {
+                            "unsupported": {"actions": ()}
+                        }
+                    }
+                },
+                "idle"
+            )
+
+        with self.assertRaises(TypeError):
+            FSMBehavior(
+                {
+                    "idle": {
+                        "events": {
+                            "say": {"condition": "text == hello"}
+                        }
+                    }
+                },
+                "idle"
+            )
+
+        with self.assertRaises(TypeError):
+            FSMBehavior(
+                {
+                    "idle": {
+                        "events": {
+                            "say": {"handler": "run arbitrary code"}
+                        }
+                    }
+                },
+                "idle"
+            )
+
+        with self.assertRaises(ValueError):
+            FSMBehavior(
+                {
+                    "idle": {
+                        "timeout": {
+                            "after": float("inf"),
+                            "target": "idle"
+                        }
+                    }
+                },
+                "idle"
+            )
+
+
+class BraveSirKnightCompatibilityTests(unittest.TestCase):
+    def test_patrol_arrival_output_and_state_are_preserved(self):
+        knight = BraveSirKnight()
+        room = Room("knight_test", "Knight Test", "A test room.")
+        request = DummyRequest()
+        session = blingmud.Session(
+            request,
+            ("127.0.0.1", 0),
+            blingmud.WORLD
+        )
+        player = Player("Observer")
+        player.session = session
+        session.player = player
+        room.players.append(player)
+        room.add_npc(knight)
+        knight.state = knight.STATE_PATROL
+        knight._patrol_step = "arrive"
+        knight.next_action_time = 0
+
+        try:
+            knight.tick()
+            transcript = b"".join(request.sent).decode("utf-8")
+
+            self.assertIn(
+                "takes up his watch beside the north road.",
+                transcript
+            )
+            self.assertEqual(knight.state, knight.STATE_PATROL)
+            self.assertEqual(knight._patrol_step, "observe")
+        finally:
+            room.remove_npc(knight)
+
+    def test_player_arrival_still_interrupts_patrol_for_greeting(self):
+        knight = BraveSirKnight()
+        player = Player("Traveller")
+        previous_action_time = knight.next_action_time
+
+        knight.on_player_enter(player)
+
+        self.assertEqual(knight.state, knight.STATE_GREET)
+        self.assertEqual(knight._greeting_resume_state, knight.STATE_PATROL)
+        self.assertEqual(len(knight._greeting_queue), 1)
+        self.assertLess(knight.next_action_time, previous_action_time)
+        self.assertEqual(knight.known_travellers["traveller"]["visits"], 1)
 
 
 if __name__ == "__main__":

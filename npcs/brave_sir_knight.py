@@ -1,25 +1,11 @@
-from core import NPC, NPCBehavior
+from core import FSMBehavior, NPC, NPCAction
 import random
 import time
 import threading
 
 
-class BraveSirKnightBehavior(NPCBehavior):
-    """Compatibility behavior for the knight's hand-authored FSM."""
-
-    mode = NPCBehavior.MODE_FSM
-
-    def tick(self):
-        return self.npc._behavior_tick()
-
-    def on_player_enter(self, player):
-        return self.npc._behavior_on_player_enter(player)
-
-    def on_player_leave(self, player):
-        return self.npc._behavior_on_player_leave(player)
-
-
-class BraveSirKnight(NPC):
+class BraveSirKnightBehavior(FSMBehavior):
+    """Brave Sir Knight's local finite-state behavior."""
 
     STATE_PATROL = "patrol"
     STATE_GREET = "greet"
@@ -35,16 +21,7 @@ class BraveSirKnight(NPC):
     )
 
     def __init__(self):
-        NPC.__init__(
-            self,
-            "Brave Sir Knight",
-            "A weary but honourable knight keeps watch over the crossroads.",
-            behavior=BraveSirKnightBehavior()
-        )
-
-        self._state_lock = threading.RLock()
-
-        self.state = self.STATE_PATROL
+        self._decision_state = threading.local()
         self.next_action_time = time.time() + random.uniform(2.0, 4.0)
 
         # Patrol state.
@@ -231,6 +208,110 @@ class BraveSirKnight(NPC):
             "A sharp axe and a patient arm accomplish much."
         )
 
+        states = {
+            self.STATE_PATROL: {
+                "events": {
+                    self.EVENT_TICK: {
+                        "handler": lambda behavior, context: (
+                            behavior._tick_patrol()
+                        )
+                    }
+                }
+            },
+            self.STATE_GREET: {
+                "events": {
+                    self.EVENT_TICK: {
+                        "handler": lambda behavior, context: (
+                            behavior._tick_greet()
+                        )
+                    }
+                }
+            },
+            self.STATE_GET_WATER: {
+                "events": {
+                    self.EVENT_TICK: {
+                        "handler": lambda behavior, context: (
+                            behavior._tick_get_water()
+                        )
+                    }
+                }
+            },
+            self.STATE_TEND_FIRE: {
+                "events": {
+                    self.EVENT_TICK: {
+                        "handler": lambda behavior, context: (
+                            behavior._tick_tend_fire()
+                        )
+                    }
+                }
+            },
+            self.STATE_GATHER_WOOD: {
+                "events": {
+                    self.EVENT_TICK: {
+                        "handler": lambda behavior, context: (
+                            behavior._tick_gather_wood()
+                        )
+                    }
+                }
+            }
+        }
+
+        FSMBehavior.__init__(
+            self,
+            states,
+            self.STATE_PATROL,
+            time_source=time.time
+        )
+
+    @property
+    def state(self):
+        return self.current_state
+
+    @state.setter
+    def state(self, state_name):
+        if state_name in self.states:
+            self.set_state(state_name)
+        else:
+            # Preserve the legacy recovery path for corrupted runtime state.
+            with self._state_lock:
+                self.current_state = state_name
+
+    @property
+    def room(self):
+        if self.npc is None:
+            return None
+        return self.npc.room
+
+    def _begin_decision(self):
+        self._decision_state.actions = []
+
+    def _finish_decision(self, actions=None):
+        result = list(getattr(self._decision_state, "actions", ()))
+
+        if actions:
+            result.extend(actions)
+
+        self._decision_state.actions = None
+        return tuple(result)
+
+    def speak(self, text):
+        actions = getattr(self._decision_state, "actions", None)
+
+        if actions is None:
+            self.npc.speak(text)
+            return
+
+        actions.append(NPCAction.say(text))
+
+    def emote(self, text):
+        actions = getattr(self._decision_state, "actions", None)
+
+        if actions is None:
+            self.npc.emote(text)
+            return
+
+        actions.append(NPCAction.emote(text))
+
     # ------------------------------------------------------------------
     # General helpers
     # ------------------------------------------------------------------
@@ -246,8 +327,15 @@ class BraveSirKnight(NPC):
     def _choose_not_last(self, choices, previous):
         choice = random.choice(choices)
 
-        while choice == previous:
-            choice = random.choice(choices)
+        if choice == previous:
+            alternatives = tuple(
+                candidate
+                for candidate in choices
+                if candidate != previous
+            )
+
+            if alternatives:
+                choice = random.choice(alternatives)
 
         return choice
 
@@ -298,7 +386,7 @@ class BraveSirKnight(NPC):
 
     def _update_fire(self):
         now = time.time()
-        elapsed = now - self._last_fire_update
+        elapsed = max(0.0, now - self._last_fire_update)
         self._last_fire_update = now
 
         # At this rate, a completely unattended strong fire lasts for
@@ -331,39 +419,30 @@ class BraveSirKnight(NPC):
     # Main dispatcher
     # ------------------------------------------------------------------
 
-    def _behavior_tick(self):
+    def tick(self):
+        self._begin_decision()
+
         if not self.room:
-            return
+            return self._finish_decision()
 
         self._update_fire()
 
         if time.time() < self.next_action_time:
-            return
+            return self._finish_decision()
 
         if not self._room_has_players():
             self._delay(2.0, 4.0)
-            return
+            return self._finish_decision()
 
         with self._state_lock:
-            if self.state == self.STATE_PATROL:
-                self._tick_patrol()
-
-            elif self.state == self.STATE_GREET:
-                self._tick_greet()
-
-            elif self.state == self.STATE_GET_WATER:
-                self._tick_get_water()
-
-            elif self.state == self.STATE_TEND_FIRE:
-                self._tick_tend_fire()
-
-            elif self.state == self.STATE_GATHER_WOOD:
-                self._tick_gather_wood()
-
-            else:
+            if self.state not in self.states:
                 self.state = self.STATE_PATROL
                 self._patrol_step = "arrive"
                 self._delay(1.0, 2.0)
+                return self._finish_decision()
+
+        actions = FSMBehavior.tick(self)
+        return self._finish_decision(actions)
 
     # ------------------------------------------------------------------
     # Patrol state
@@ -948,7 +1027,8 @@ class BraveSirKnight(NPC):
     # Player events
     # ------------------------------------------------------------------
 
-    def _behavior_on_player_enter(self, player):
+    def on_player_enter(self, player):
+        self._begin_decision()
         key = player.name.lower()
         now = time.time()
 
@@ -996,7 +1076,10 @@ class BraveSirKnight(NPC):
             if self.next_action_time > soon:
                 self.next_action_time = soon
 
-    def _behavior_on_player_leave(self, player):
+        return self._finish_decision()
+
+    def on_player_leave(self, player):
+        self._begin_decision()
         key = player.name.lower()
         now = time.time()
 
@@ -1034,3 +1117,57 @@ class BraveSirKnight(NPC):
             ).format(player.name)
 
             self.speak(farewell)
+
+        return self._finish_decision()
+
+
+class BraveSirKnight(NPC):
+    """The crossroads knight, with all decisions owned by his FSM behavior."""
+
+    STATE_PATROL = BraveSirKnightBehavior.STATE_PATROL
+    STATE_GREET = BraveSirKnightBehavior.STATE_GREET
+    STATE_GET_WATER = BraveSirKnightBehavior.STATE_GET_WATER
+    STATE_TEND_FIRE = BraveSirKnightBehavior.STATE_TEND_FIRE
+    STATE_GATHER_WOOD = BraveSirKnightBehavior.STATE_GATHER_WOOD
+    PATROL_DIRECTIONS = BraveSirKnightBehavior.PATROL_DIRECTIONS
+
+    _LOCAL_ATTRIBUTES = (
+        "name",
+        "description",
+        "room",
+        "flags",
+        "keywords",
+        "inventory",
+        "behavior",
+        "speak",
+        "emote"
+    )
+
+    def __init__(self):
+        NPC.__init__(
+            self,
+            "Brave Sir Knight",
+            "A weary but honourable knight keeps watch over the crossroads.",
+            behavior=BraveSirKnightBehavior()
+        )
+
+    def __getattr__(self, name):
+        behavior = self.__dict__.get("behavior")
+
+        if behavior is not None:
+            return getattr(behavior, name)
+
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        behavior = self.__dict__.get("behavior")
+
+        if (
+            behavior is not None
+            and name not in self._LOCAL_ATTRIBUTES
+            and hasattr(behavior, name)
+        ):
+            setattr(behavior, name, value)
+            return
+
+        object.__setattr__(self, name, value)

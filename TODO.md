@@ -20,6 +20,11 @@ Known bugs / first fixes
 ☒ Replace persistent unsalted SHA-256 password hashes with salted PBKDF2-SHA256 and migrate legacy hashes after successful authentication.
 ☒ Restrict the admin hash file to owner-only permissions.
 ☒ Unregister removed NPCs from the global NPC manager.
+☒ Replace Brave Sir Knight's unbounded retry-until-different dialogue loop with bounded selection and regression coverage for degenerate randomness and one-entry pools.
+☒ Bound concurrency-test waits and provide `run_tests.py` as a 30-second watchdog around the normally sub-second test suite.
+☒ Reject Unicode terminal/bidirectional controls in structured NPC output and make detached behavior ticks inert.
+☒ Prevent backwards wall-clock adjustments from increasing Brave Sir Knight's fire strength.
+☒ Bound `NPCManager.stop()` so server shutdown cannot wait forever on a stuck ticker callback, and allow stop-before-start safely.
 ☐ Continue reviewing for obvious bugs and security issues before each new feature patch.
 
 Core engine
@@ -36,13 +41,15 @@ NPCs
 ☒ Add a shared NPC behavior contract for enter, leave, speech, emote, and tick events.
 ☒ Deliver player speech and `/me` events to NPC behaviors.
 ☒ Isolate NPC callback failures so one broken behavior does not stop room event delivery or the global ticker.
+☐ Ensure a non-returning trusted NPC callback cannot stall every later NPC in the sequential global ticker; design this with the room-aware scheduler and avoid leaking replacement threads.
 ☒ Route Brave Sir Knight's existing FSM through the shared behavior contract without changing his intended behavior.
 ☒ Add validated, ordered speech/emote actions as structured behavior output.
 ☐ Add reusable behavior implementations so a single NPC can be:
   ☒ simple random chatter
-  ☐ deterministic FSM
+  ☒ deterministic data-backed FSM
   ☐ FSM with optional LLM assistance
-☐ Re-express Brave Sir Knight's procedural state machine using the reusable FSM implementation once it exists.
+☒ Re-express Brave Sir Knight's state machine through `FSMBehavior`, with a thin NPC entity and behavior-owned state/content.
+☒ Add a comprehensive Brave Sir Knight characterization suite covering all states, chore paths, greetings, farewells, memory, timing, invalid-state recovery, empty-room behavior, random output branches, and concurrent decisions.
 ☐ Make NPC memory structured and optional.
 ☐ Add fallback from LLM to FSM when the provider is unavailable.
 ☐ Make OpenRouter configuration optional: missing or incomplete keys/settings must disable remote calls without preventing startup.
