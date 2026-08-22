@@ -45,7 +45,9 @@ Core engine
 ☒ Use a two-worker, 16-pending authentication pool; throttle five failures per IP/account over five minutes and three validated account creations per IP/hour.
 ☒ Disconnect pre-auth clients after 120 idle seconds; warn authenticated players with BEL at ten hours and save/disconnect them at twelve hours, resetting idle state on input.
 ☐ Replace the transitional line decoder with the complete incremental Telnet/UTF-8 parser, including subnegotiation, escaped IAC, CR-NUL, Unicode backspace, and Tab events.
-☐ Add periodic autosave without adding an unbounded or uninterruptible background process.
+☒ Add 60-second autosave that compares bounded serialized snapshots, skips busy state locks without blocking selector I/O, and submits changed characters only.
+☒ Route selector-era character writes through one 64-key bounded, per-player coalescing persistence writer; retry after failures and wait for a queued final snapshot on disconnect.
+☒ Give graceful shutdown one ten-second gameplay/persistence deadline and report workers or writes that do not finish instead of waiting indefinitely.
 ☐ Add persistent IDs and templates for rooms, items, and world objects where needed.
   ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat, royal possum bottle cap, giant acorn, Val's healing potion, Valkyrie mead, and horn-born special.
   ☐ Register each future persistent item explicitly as its content patch lands; never deserialize arbitrary class names.

@@ -20,6 +20,11 @@ import threading
 import traceback
 
 from server_runtime import SelectorMudServer
+from persistence_runtime import (
+    AutosaveCoordinator,
+    GRACEFUL_FLUSH_SECONDS,
+    PersistenceWriter
+)
 
 from player_state import (
     MAX_PLAYER_STATE_BYTES,
@@ -46,6 +51,8 @@ USERS_LOCK = threading.RLock()
 SESSIONS_LOCK = threading.RLock()
 
 ADMIN_PASSWORD_HASH = None
+PERSISTENCE_WRITER = None
+AUTOSAVE_COORDINATOR = None
 
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 600000
@@ -314,6 +321,17 @@ def update_user_state(username, encoded_state):
     finally:
         connection.close()
 
+
+def persist_user_state(username, encoded_state):
+    """Write one validated player snapshot through the shared DB lock."""
+    with USERS_LOCK:
+        update_user_state(username, encoded_state)
+
+
+def active_sessions_snapshot():
+    with SESSIONS_LOCK:
+        return list(SESSIONS.values())
+
 def strip_telnet_control_codes(data):
     """Remove basic Telnet negotiation bytes.
 
@@ -464,7 +482,7 @@ class Session(object):
     Network reads and writes may be owned by the selector runtime.
     """
 
-    def __init__(self, request, address, world):
+    def __init__(self, request, address, world, persistence_writer=None):
         self.request = request
         self.address = address
         self.world = world
@@ -482,6 +500,129 @@ class Session(object):
         self.login_room = None
         self.gameplay_thread = None
         self.gameplay_thread_lock = threading.RLock()
+        self.state_lock = threading.RLock()
+        self.save_lock = threading.RLock()
+        self.persistence_writer = persistence_writer
+        self.persisted_state_json = None
+        self.last_submitted_state_json = None
+        self.last_save_receipt = None
+        self.last_save_error = None
+
+    def set_persisted_state(self, encoded_state):
+        with self.save_lock:
+            self.persisted_state_json = encoded_state
+            self.last_submitted_state_json = encoded_state
+            self.last_save_receipt = None
+            self.last_save_error = None
+
+    def _save_completed(self, success, error, requested_state):
+        with self.save_lock:
+            if success:
+                self.persisted_state_json = requested_state
+                self.last_save_error = None
+            else:
+                self.last_save_error = error
+
+                if self.last_submitted_state_json == requested_state:
+                    self.last_submitted_state_json = self.persisted_state_json
+
+    def save_if_changed(self, wait=False, timeout=GRACEFUL_FLUSH_SECONDS):
+        """Serialize once and write only when the snapshot has changed."""
+        if self.player is None:
+            return "unavailable"
+
+        if not self.running and not wait:
+            return "unavailable"
+
+        state_acquired = self.state_lock.acquire(blocking=bool(wait))
+
+        if not state_acquired:
+            return "busy"
+
+        try:
+            player = self.player
+
+            if player is None:
+                return "unavailable"
+
+            username = player.name
+            encoded_state = serialize_player_state(player)
+        except PlayerStateError as error:
+            with self.save_lock:
+                self.last_save_error = error
+            return "failed"
+        finally:
+            self.state_lock.release()
+
+        wait_for_existing = None
+        receipt = None
+
+        with self.save_lock:
+            if encoded_state == self.last_submitted_state_json:
+                wait_for_existing = self.last_save_receipt
+
+                if wait_for_existing is None or not wait:
+                    return "unchanged"
+
+                if wait_for_existing.event.is_set():
+                    if wait_for_existing.success:
+                        return "unchanged"
+
+                    self.last_save_error = wait_for_existing.error
+                    return "failed"
+            else:
+                writer = self.persistence_writer
+
+                if writer is None:
+                    try:
+                        persist_user_state(username, encoded_state)
+                    except (PlayerStateError, sqlite3.Error) as error:
+                        self.last_save_error = error
+                        return "failed"
+
+                    self.persisted_state_json = encoded_state
+                    self.last_submitted_state_json = encoded_state
+                    self.last_save_receipt = None
+                    self.last_save_error = None
+                    return "queued"
+
+                receipt = writer.submit(
+                    username,
+                    encoded_state,
+                    self._save_completed
+                )
+
+                if receipt.event.is_set() and not receipt.success:
+                    self.last_save_error = receipt.error
+                    return "failed"
+
+                self.last_submitted_state_json = encoded_state
+                self.last_save_receipt = receipt
+
+        if wait_for_existing is not None:
+            if wait_for_existing.wait(timeout):
+                return "unchanged"
+
+            with self.save_lock:
+                if wait_for_existing.error is not None:
+                    self.last_save_error = wait_for_existing.error
+                else:
+                    self.last_save_error = RuntimeError(
+                        "timed out waiting for persistence writer"
+                    )
+            return "failed"
+
+        if wait and not receipt.wait(timeout):
+            with self.save_lock:
+                if receipt.error is not None:
+                    self.last_save_error = receipt.error
+                else:
+                    self.last_save_error = RuntimeError(
+                        "timed out waiting for persistence writer"
+                    )
+            return "failed"
+
+        return "queued"
 
     def enable_character_mode(self):
         """Ask a real Telnet client to use server-side character input."""
@@ -881,6 +1022,8 @@ class Session(object):
                     "session is starting from safe defaults."
                 )
 
+            self.set_persisted_state(account["state_json"])
+
             return True
 
         return False
@@ -960,6 +1103,8 @@ class Session(object):
                 self.player.session = self
                 self.login_room = self.world.starting_room
                 SESSIONS[key] = self
+
+            self.set_persisted_state(new_player_state_json())
 
             self.send("Account created.")
             return True
@@ -1081,9 +1226,10 @@ class Session(object):
         self.send("More importantly, try /bling.")
         self.send("")
 
-        entry_room = self.login_room or self.world.starting_room
-        entry_room.enter(self.player)
-        entry_room.describe_to(self.player)
+        with self.state_lock:
+            entry_room = self.login_room or self.world.starting_room
+            entry_room.enter(self.player)
+            entry_room.describe_to(self.player)
 
         while self.running:
             self.prompt("> ")
@@ -1095,10 +1241,11 @@ class Session(object):
             if not line:
                 continue
 
-            if line.startswith("/"):
-                self.handle_command(line)
-            else:
-                self.handle_chat(line)
+            with self.state_lock:
+                if line.startswith("/"):
+                    self.handle_command(line)
+                else:
+                    self.handle_chat(line)
 
     def disconnect(self):
         if not self.running and self.player is None:
@@ -1109,21 +1256,22 @@ class Session(object):
         if self.player is not None:
             player = self.player
 
-            try:
-                encoded_state = serialize_player_state(player)
+            save_result = self.save_if_changed(
+                wait=True,
+                timeout=GRACEFUL_FLUSH_SECONDS
+            )
 
-                with USERS_LOCK:
-                    update_user_state(player.name, encoded_state)
-            except (PlayerStateError, sqlite3.Error) as error:
+            if save_result == "failed":
                 sys.stderr.write(
                     "Could not save player state for {0}: {1}\n".format(
                         player.name,
-                        error
+                        self.last_save_error
                     )
                 )
 
-            if player.room is not None:
-                player.room.leave(player)
+            with self.state_lock:
+                if player.room is not None:
+                    player.room.leave(player)
 
             key = player.name.lower()
 
@@ -1131,8 +1279,11 @@ class Session(object):
                 if SESSIONS.get(key) is self:
                     del SESSIONS[key]
 
-            player.session = None
-            self.player = None
+            with self.state_lock:
+                player.session = None
+
+                if self.player is player:
+                    self.player = None
 
         try:
             self.request.shutdown(2)
@@ -1290,7 +1441,8 @@ def _authenticate_account(account, password, world):
         "authenticated": True,
         "player": player,
         "login_room": login_room,
-        "invalid_state": invalid_state
+        "invalid_state": invalid_state,
+        "stored_state": account["state_json"]
     }
 
 
@@ -1547,7 +1699,8 @@ class PreAuthController(object):
         self._finish_authenticated(
             result["player"],
             result["login_room"],
-            result["invalid_state"]
+            result["invalid_state"],
+            result["stored_state"]
         )
 
     def _handle_new_name(self, line):
@@ -1655,10 +1808,17 @@ class PreAuthController(object):
         self._finish_authenticated(
             player,
             self.session.world.starting_room,
-            False
+            False,
+            new_player_state_json()
         )
 
-    def _finish_authenticated(self, player, login_room, invalid_state):
+    def _finish_authenticated(
+        self,
+        player,
+        login_room,
+        invalid_state,
+        stored_state
+    ):
         key = player.name.lower()
 
         with SESSIONS_LOCK:
@@ -1689,6 +1849,7 @@ class PreAuthController(object):
             self.connection.ip_address,
             player.name
         )
+        self.session.set_persisted_state(stored_state)
         self.account = None
         self.requested_name = None
         self.new_name = None
@@ -1698,7 +1859,12 @@ class PreAuthController(object):
 
 
 def begin_selector_connection(server, connection):
-    session = Session(connection, connection.address, WORLD)
+    session = Session(
+        connection,
+        connection.address,
+        WORLD,
+        persistence_writer=PERSISTENCE_WRITER
+    )
     controller = PreAuthController(server, connection, session)
     connection.auth_controller = controller
     controller.start()
@@ -1707,6 +1873,8 @@ def begin_selector_connection(server, connection):
 def main():
     global ADMIN_PASSWORD_HASH
     global NPC_MANAGER
+    global PERSISTENCE_WRITER
+    global AUTOSAVE_COORDINATOR
 
     try:
         host, port = configured_server_address()
@@ -1715,6 +1883,10 @@ def main():
         return 2
 
     init_user_database()
+
+    PERSISTENCE_WRITER = PersistenceWriter(persist_user_state)
+    PERSISTENCE_WRITER.start()
+    AUTOSAVE_COORDINATOR = AutosaveCoordinator(active_sessions_snapshot)
 
     if os.path.exists("admin.hash"):
         with open("admin.hash", "r") as f:
@@ -1739,11 +1911,15 @@ def main():
         (host, port),
         begin_selector_connection
     )
+    server.add_maintenance_callback(AUTOSAVE_COORDINATOR.tick)
 
     try:
         server.bind()
     except OSError as error:
         server.server_close()
+        PERSISTENCE_WRITER.shutdown(GRACEFUL_FLUSH_SECONDS)
+        PERSISTENCE_WRITER = None
+        AUTOSAVE_COORDINATOR = None
         sys.stderr.write("Could not bind BlingMUD listener: {0}\n".format(error))
         return 1
 
@@ -1758,9 +1934,52 @@ def main():
         print("")
         print("Shutting down BLINGMUD.")
     finally:
+        NPC_MANAGER.stop()
+        sessions = active_sessions_snapshot()
         server.shutdown()
         server.server_close()
-        NPC_MANAGER.stop()
+
+        deadline = time.monotonic() + GRACEFUL_FLUSH_SECONDS
+
+        for session in sessions:
+            worker = session.gameplay_thread
+
+            if worker is None or worker is threading.current_thread():
+                continue
+
+            remaining = deadline - time.monotonic()
+
+            if remaining <= 0:
+                break
+
+            worker.join(remaining)
+
+        if any(
+            session.gameplay_thread is not None
+            and session.gameplay_thread.is_alive()
+            for session in sessions
+        ):
+            sys.stderr.write(
+                "One or more gameplay workers did not stop within ten "
+                "seconds.\n"
+            )
+
+        remaining = max(0.0, deadline - time.monotonic())
+
+        if not PERSISTENCE_WRITER.flush(remaining):
+            sys.stderr.write(
+                "Persistence flush did not finish within ten seconds.\n"
+            )
+
+        remaining = max(0.0, deadline - time.monotonic())
+
+        if not PERSISTENCE_WRITER.shutdown(remaining):
+            sys.stderr.write(
+                "Persistence writer did not stop within ten seconds.\n"
+            )
+
+        PERSISTENCE_WRITER = None
+        AUTOSAVE_COORDINATOR = None
 
     return 0
 

@@ -93,6 +93,26 @@ class RuntimeConfigurationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 blingmud.configured_server_address(environment)
 
+    def test_broken_maintenance_callback_does_not_block_later_work(self):
+        runtime = object.__new__(server_runtime.SelectorMudServer)
+        calls = []
+
+        def broken():
+            raise RuntimeError("broken maintenance")
+
+        runtime.maintenance_callbacks = [broken, lambda: calls.append("ok")]
+        original_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+
+        try:
+            runtime._run_maintenance()
+            warning = sys.stderr.getvalue()
+        finally:
+            sys.stderr = original_stderr
+
+        self.assertEqual(calls, ["ok"])
+        self.assertIn("maintenance callback failed", warning)
+
 
 class ConnectionAdmissionTests(unittest.TestCase):
     def setUp(self):

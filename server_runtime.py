@@ -555,6 +555,7 @@ class SelectorMudServer(object):
         self.admission = ConnectionAdmission()
         self.rate_limiter = AuthRateLimiter(self.time_source)
         self.control_queue = queue.Queue()
+        self.maintenance_callbacks = []
         self.stopping = threading.Event()
         self.owner_thread = None
         self.wake_reader, self.wake_writer = socket.socketpair()
@@ -599,6 +600,12 @@ class SelectorMudServer(object):
     def request_close(self, connection):
         self.control_queue.put(("close", connection))
         self.wake()
+
+    def add_maintenance_callback(self, callback):
+        if not callable(callback):
+            raise TypeError("maintenance callback must be callable")
+
+        self.maintenance_callbacks.append(callback)
 
     def promote_authenticated(self, connection):
         if not self.admission.can_promote(self.connections, connection):
@@ -780,6 +787,16 @@ class SelectorMudServer(object):
                 else:
                     self._close_connection(connection)
 
+    def _run_maintenance(self):
+        for callback in list(self.maintenance_callbacks):
+            try:
+                callback()
+            except Exception:
+                sys.stderr.write(
+                    "Selector maintenance callback failed.\n"
+                )
+                traceback.print_exc(file=sys.stderr)
+
     def serve_once(self, timeout=SELECT_TIMEOUT_SECONDS):
         self.auth_pool.drain()
         self._drain_controls()
@@ -804,6 +821,7 @@ class SelectorMudServer(object):
         self.auth_pool.drain()
         self._drain_controls()
         self._check_idle_connections()
+        self._run_maintenance()
 
     def serve_forever(self):
         self.bind()

@@ -32,8 +32,8 @@ First fixes
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, prominent plaintext-Telnet warnings at startup and before authentication, deliberate hidden-input echo/redraw suppression, selector-owned sockets/pre-auth/timeouts/output, bounded authentication workers and rate limits, one sequential gameplay worker per authenticated player, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with six whitelisted item templates plus health/intoxication state and logout save/load, matching gameplay inventory/room-item limits, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, the first Village Green/Hanging Tree/Wisp Mother slice, the initial Val's Hella Holler/Val/fixed-drink slice, and regression coverage for all of them.
-- Still planned: persistence autosave and future schema migrations beyond the backward-compatible version-1 additions, intoxication decay and richer status effects, optional structured NPC memory, bounded isolation for a trusted callback that never returns, the `llm_fsm` advisory wrapper and OpenRouter failover, popularity/priority budgeting, admin tooling, Corbel and the village economy, durable world-state persistence, richer custom horn drinks/food/prices/regulars, and the remaining village content from the email threads. TLS and encrypted transport are explicitly excluded from this implementation plan; the residual plaintext risk is accepted and must remain honestly documented.
+- Implemented now: the first-fix engine bugs above, prominent plaintext-Telnet warnings at startup and before authentication, deliberate hidden-input echo/redraw suppression, selector-owned sockets/pre-auth/timeouts/output, bounded authentication workers and rate limits, one sequential gameplay worker per authenticated player, 60-second dirty-only autosave, a single bounded/coalescing character writer and ten-second graceful flush, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with six whitelisted item templates plus health/intoxication state and logout save/load, matching gameplay inventory/room-item limits, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, the first Village Green/Hanging Tree/Wisp Mother slice, the initial Val's Hella Holler/Val/fixed-drink slice, and regression coverage for all of them.
+- Still planned: future character schema migrations beyond version 1, intoxication decay and richer status effects, optional structured NPC memory, bounded isolation for a trusted callback that never returns, the `llm_fsm` advisory wrapper and OpenRouter failover, popularity/priority budgeting, admin tooling, Corbel and the village economy, durable world-state persistence, richer custom horn drinks/food/prices/regulars, and the remaining village content from the email threads. TLS and encrypted transport are explicitly excluded from this implementation plan; the residual plaintext risk is accepted and must remain honestly documented.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 - OpenRouter remains design-only and explicitly deferred; implementation requires a later, explicit user authorization.
 
@@ -86,7 +86,7 @@ Persistence and character state
 
 - Keep the current SQLite account store, but formalize player state as a versioned JSON blob rather than a loose prototype payload.
 - Preserve the existing login table shape for compatibility, but treat the player state column as a first-class serialized character snapshot with migration/version metadata.
-- Save character state on logout and add periodic autosave so a disconnect does not lose progress.
+- [done] Save character state on logout and every 60 seconds when its serialized snapshot changed, so ordinary disconnects do not lose all progress since login.
 - Serialize room ID, inventory, equipment, stats, status effects, quest flags, and NPC relationship/memory data explicitly rather than trying to pickle live objects. Never serialize authenticated session admin privilege as character state.
 - Add a player-state repository layer so loading/saving a character does not depend on session code.
 - Add migrations for future schema evolution so new fields can be added without breaking old characters.
@@ -96,7 +96,10 @@ Persistence and character state
 - [done: minimum layer] Current item restoration is an explicit `pimp_hat` / `royal_possum_bottle_cap` / `giant_acorn` / `val_healing_potion` / `valkyrie_mead` / `horn_born_special` template whitelist with bounded payload, inventory, equipment, stat, password, and input sizes. Gameplay acquisition paths share the same 100-item inventory bound, room item lists have a separate 100-item bound, unknown templates and inconsistent equipment fail closed, and no save data controls imports or class names.
 - [done: minimum layer] Successful logins restore the last known room, with removed/unknown rooms falling back to the starting room. Disconnect saves before room removal, and a failed or lossy save leaves the previous database state intact while cleanup continues.
 - [security invariant] Admin privilege remains session-only and is deliberately absent from character JSON; never turn a gameplay save into an authentication or authorization source.
-- Still required here: periodic autosave, explicit migrations when version 2 is introduced, more item templates as real content lands, and eventual structured status/quest/relationship fields when those systems actually exist.
+- [done: autosave layer] Selector maintenance triggers a 60-second pass, but each session state lock is acquired non-blockingly so autosave cannot stall network I/O. Busy sessions are skipped until the next pass. Changed snapshots are compared against the last submitted JSON and queued; identical snapshots produce no database write.
+- [done: one writer] A single daemon persistence worker accepts at most 64 pending player keys, coalesces multiple pending snapshots for the same lowercase name to the newest full snapshot, reports failures to the session so later passes retry, and never grows an unbounded task queue.
+- [done: final save/shutdown] Disconnect waits up to ten seconds for its final or already-pending snapshot before leaving the room. Process shutdown closes sockets to wake gameplay workers, gives all gameplay joins and persistence flush/stop one shared ten-second deadline, and reports rather than waits forever on a stuck worker/write.
+- Still required here: explicit migrations when version 2 is introduced, more item templates as real content lands, and eventual structured status/quest/relationship fields when those systems actually exist.
 
 Connection and session runtime
 
@@ -412,7 +415,7 @@ Implementation order by system
 - Persistence and login:
   - stabilize user save/load
   - version character state
-  - add autosave and logout save
+  - [done] add dirty-only 60-second autosave and final logout save through one bounded writer
   - keep auth and gameplay state distinct
 - Core NPC engine:
   - [done: contract stage] abstract the behavior interface
@@ -457,7 +460,7 @@ Definitions
 
 Implementation order
 
-- Phase 1: [done: minimum layer] fix the concrete engine/security bugs, formalize version-1 player state persistence, and save/load on login and disconnect. Periodic autosave remains a follow-up.
+- Phase 1: [done] fix the concrete engine/security bugs, formalize version-1 player state persistence, save/load on login and disconnect, and add bounded dirty-only periodic autosave.
 - Phase 2: [done: local scheduler] the generic behavior system, Brave Sir Knight migration, room activity metrics, and global empty-room heartbeat suspension are complete. Non-returning callback isolation remains a separate safety task.
 - Phase 3: add OpenRouter integration, circuit breaker failover, structured JSON output, and priority budgeting for LLM-capable NPCs.
 - Phase 4: add admin/ops commands for NPC mode control, health checks, state inspection, and reloads.
@@ -764,6 +767,7 @@ What exists vs what is still planned
   - a bounded two-worker authentication pool and selector-driven login/character creation state machine
   - one sequential gameplay worker per authenticated player, preserving the simple `Session` API
   - hard total/pre-auth/authenticated/per-IP connection limits, login/account-creation rate limits, and pre-auth plus 10h/12h authenticated idle policy
+  - 60-second dirty-only character autosave through one 64-key coalescing persistence writer, with retryable failures and a shared ten-second graceful-shutdown deadline
   - SQLite user table with serialized state
   - salted PBKDF2-SHA256 password hashes with successful-login migration from the legacy unsalted format
   - room objects with exits, items, players, and NPC lists
@@ -785,7 +789,7 @@ What exists vs what is still planned
   - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
   - the complete incremental Telnet/UTF-8 parser and Tab completion events
-  - persistence autosave, future version migrations, and schemas for general status effects, quests, relationships, custom drinks, and durable world ecology
+  - future version migrations and schemas for general status effects, quests, relationships, custom drinks, and durable world ecology; 60-second dirty-only character autosave is implemented
   - bounded isolation for a trusted NPC callback that never returns
   - OpenRouter integration and LLM failover, deferred until explicitly re-authorized by the user
   - budgeted NPC priority system
@@ -807,7 +811,7 @@ Milestone 1: stabilize the current engine
 - [done] Formalize player state serialization so saves and loads are stable and bounded.
 - [done] Add a version field to player state data and migrate legacy empty state to version 1.
 - [done] Add a minimal save on logout, performed before the player leaves their final room.
-- Add an autosave pass if practical without destabilizing the current threaded model.
+- [done] Add an autosave pass without blocking selector I/O or destabilizing the sequential gameplay-worker model.
 
 Milestone 2: generalize NPC behavior
 

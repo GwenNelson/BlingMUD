@@ -24,6 +24,8 @@ One selector owns listening, socket reads, socket writes, login input, timeouts,
 
 Runtime limits are intentionally modest: 64 total connections, 32 login connections, 32 authenticated players, 8 connections per source address, a 120-second login idle timeout, and a 256 KiB output queue per connection. Five failed logins for one address/account pair within five minutes are blocked, and one address may create at most three accounts per hour. Authenticated players receive an audible warning after ten idle hours and are saved and disconnected after twelve.
 
+Active characters are considered for autosave every 60 seconds. The engine serializes only characters whose state lock is immediately available, compares the bounded JSON snapshot with the last submitted snapshot, and sends changed state to one coalescing persistence writer. Busy characters are retried on the next pass. Logout waits for its final queued snapshot; server shutdown gives gameplay workers and the writer one shared ten-second flush deadline and reports anything that fails to stop.
+
 The listener defaults to `0.0.0.0:4000`. Operators may set `BLINGMUD_HOST` and `BLINGMUD_PORT`; invalid values stop startup instead of silently choosing another address.
 
 The goal is to scale to groups of 10-20 active users at most and again to make it fun.
