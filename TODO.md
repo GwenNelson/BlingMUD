@@ -62,7 +62,7 @@ NPCs
 ☒ Add a shared NPC behavior contract for enter, leave, speech, emote, and tick events.
 ☒ Deliver player speech and `/me` events to NPC behaviors.
 ☒ Isolate NPC callback failures so one broken behavior does not stop room event delivery or the global ticker.
-☐ Ensure a non-returning trusted NPC callback cannot stall every later NPC in the sequential global ticker; design this with the room-aware scheduler and avoid leaking replacement threads.
+☒ Isolate every NPC behind one lazy bounded actor worker so a non-returning trusted callback selects inert fallback for only that NPC, cannot stall later recipients, and never causes replacement-thread leaks.
 ☒ Route Brave Sir Knight's existing FSM through the shared behavior contract without changing his intended behavior.
 ☒ Add validated, ordered speech/emote actions as structured behavior output.
 ☐ Add reusable behavior implementations so a single NPC can be:

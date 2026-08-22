@@ -1,3 +1,4 @@
+import collections
 import threading
 import time
 import traceback
@@ -7,6 +8,9 @@ import math
 import unicodedata
 
 TICK_DELAY = 3.0
+NPC_CALLBACK_TIMEOUT = 1.0
+NPC_ACTOR_STOP_TIMEOUT = 0.25
+NPC_MAILBOX_LIMIT = 16
 NPC_ACTION_MAX_TEXT_LENGTH = 1000
 PLAYER_INVENTORY_LIMIT = 100
 ROOM_ITEM_LIMIT = 100
@@ -140,18 +144,28 @@ class Room(object):
             return True
 
     def add_npc(self, npc):
+        added = False
+
         with self.lock:
             if npc not in self.npcs:
                 self.npcs.append(npc)
-                NPCManager.instance().register(npc)
                 npc.room = self
+                added = True
+
+        if added:
+            NPCManager.instance().register(npc)
 
     def remove_npc(self, npc):
+        removed = False
+
         with self.lock:
             if npc in self.npcs:
                 self.npcs.remove(npc)
-                NPCManager.instance().unregister(npc)
                 npc.room = None
+                removed = True
+
+        if removed:
+            NPCManager.instance().unregister(npc)
 
     def enter(self, player, announce=True):
         previous_room = player.room
@@ -264,19 +278,34 @@ class Room(object):
         with self.lock:
             recipients = list(self.npcs)
 
+        scheduled = []
+
         for npc in recipients:
-            callback = getattr(npc, method_name)
+            try:
+                job = npc.schedule_behavior(method_name, *arguments)
+                scheduled.append((npc, job))
+            except Exception:
+                self._report_npc_event_failure(method_name, npc)
+
+        deadline = time.monotonic() + NPC_CALLBACK_TIMEOUT
+
+        for npc, job in scheduled:
+            remaining = max(0.0, deadline - time.monotonic())
 
             try:
-                callback(*arguments)
+                npc.await_behavior(job, remaining)
             except Exception:
-                sys.stderr.write(
-                    "NPC event {0} failed for {1}.\n".format(
-                        method_name,
-                        npc.name
-                    )
-                )
-                traceback.print_exc()
+                self._report_npc_event_failure(method_name, npc)
+
+    @staticmethod
+    def _report_npc_event_failure(method_name, npc):
+        sys.stderr.write(
+            "NPC event {0} failed for {1}.\n".format(
+                method_name,
+                npc.name
+            )
+        )
+        traceback.print_exc()
 
     def describe_to(self, player):
         player.session.send("")
@@ -1275,6 +1304,248 @@ class FSMBehavior(NPCBehavior):
             }
 
 
+class NPCActorError(RuntimeError):
+    pass
+
+
+class NPCActorTimeout(NPCActorError):
+    pass
+
+
+class NPCActorUnavailable(NPCActorError):
+    pass
+
+
+class NPCActorJob(object):
+    def __init__(self, method_name, arguments):
+        self.method_name = method_name
+        self.arguments = arguments
+        self.event = threading.Event()
+        self.result = None
+        self.error = None
+        self.action_lock = threading.RLock()
+        self.actions_performed = False
+
+    def complete(self, result=None, error=None):
+        if self.event.is_set():
+            return
+
+        self.result = result
+        self.error = error
+        self.event.set()
+
+
+class NPCActor(object):
+    """One bounded sequential callback worker owned by one NPC."""
+
+    VALID_METHODS = frozenset((
+        "on_player_enter",
+        "on_player_leave",
+        "on_say",
+        "on_emote",
+        "tick"
+    ))
+
+    def __init__(
+        self,
+        npc,
+        mailbox_limit=NPC_MAILBOX_LIMIT,
+        callback_timeout=NPC_CALLBACK_TIMEOUT,
+        time_source=None
+    ):
+        if mailbox_limit <= 0:
+            raise ValueError("NPC mailbox limit must be positive")
+
+        if callback_timeout <= 0:
+            raise ValueError("NPC callback timeout must be positive")
+
+        self.npc = npc
+        self.mailbox_limit = mailbox_limit
+        self.callback_timeout = float(callback_timeout)
+        self.time_source = time_source or time.monotonic
+        self.condition = threading.Condition(threading.RLock())
+        self.mailbox = collections.deque()
+        self.thread = None
+        self.closing = False
+        self.unresponsive = False
+        self.current_job = None
+        self.current_started_at = None
+        self.tick_job = None
+        self.submitted = 0
+        self.completed = 0
+        self.errors = 0
+        self.timeouts = 0
+        self.rejected = 0
+
+    def _start_locked(self):
+        if self.unresponsive:
+            return False
+
+        if self.thread is not None and self.thread.is_alive():
+            return not self.closing
+
+        self.closing = False
+        self.thread = threading.Thread(
+            target=self._run,
+            name="blingmud-npc-{0:x}".format(id(self.npc)),
+            daemon=True
+        )
+        self.thread.start()
+        return True
+
+    def submit(self, method_name, arguments):
+        if method_name not in self.VALID_METHODS:
+            raise ValueError("unsupported NPC actor method")
+
+        with self.condition:
+            if not self._start_locked():
+                self.rejected += 1
+                raise NPCActorUnavailable(
+                    "NPC actor is using inert fallback"
+                )
+
+            if method_name == "tick" and self.tick_job is not None:
+                if not self.tick_job.event.is_set():
+                    return self.tick_job
+
+            if len(self.mailbox) >= self.mailbox_limit:
+                self.rejected += 1
+                raise NPCActorUnavailable("NPC actor mailbox is full")
+
+            job = NPCActorJob(method_name, arguments)
+            self.mailbox.append(job)
+            self.submitted += 1
+
+            if method_name == "tick":
+                self.tick_job = job
+
+            self.condition.notify_all()
+            return job
+
+    def wait(self, job, timeout=None):
+        if timeout is None:
+            timeout = self.callback_timeout
+
+        if not job.event.wait(max(0.0, timeout)):
+            self._mark_unresponsive(job)
+
+            if job.error is not None:
+                raise job.error
+
+            return job.result
+
+        if job.error is not None:
+            raise job.error
+
+        return job.result
+
+    def _mark_unresponsive(self, timed_out_job):
+        error = NPCActorUnavailable(
+            "NPC actor is using inert fallback after callback timeout"
+        )
+
+        with self.condition:
+            if timed_out_job.event.is_set():
+                return
+
+            self.unresponsive = True
+            self.closing = True
+            self.timeouts += 1
+            timed_out_job.complete(error=NPCActorTimeout(
+                "NPC callback did not return"
+            ))
+
+            while self.mailbox:
+                self.mailbox.popleft().complete(error=error)
+
+            self.condition.notify_all()
+
+    def _run(self):
+        while True:
+            with self.condition:
+                while not self.mailbox and not self.closing:
+                    self.condition.wait()
+
+                if self.closing and not self.mailbox:
+                    return
+
+                job = self.mailbox.popleft()
+                self.current_job = job
+                self.current_started_at = self.time_source()
+
+            result = None
+            error = None
+
+            try:
+                result = self.npc._run_behavior_direct(
+                    job.method_name,
+                    *job.arguments
+                )
+            except Exception as caught_error:
+                error = caught_error
+
+            with self.condition:
+                self.current_job = None
+                self.current_started_at = None
+
+                if self.tick_job is job:
+                    self.tick_job = None
+
+                if not job.event.is_set():
+                    job.complete(result=result, error=error)
+
+                    if error is None:
+                        self.completed += 1
+                    else:
+                        self.errors += 1
+
+                if self.unresponsive:
+                    return
+
+    def stop(self, timeout=NPC_ACTOR_STOP_TIMEOUT):
+        with self.condition:
+            self.closing = True
+            error = NPCActorUnavailable("NPC actor stopped")
+
+            while self.mailbox:
+                self.mailbox.popleft().complete(error=error)
+
+            thread = self.thread
+            self.condition.notify_all()
+
+        if (
+            thread is None
+            or thread is threading.current_thread()
+            or not thread.is_alive()
+        ):
+            return True
+
+        thread.join(max(0.0, timeout))
+
+        if thread.is_alive():
+            with self.condition:
+                self.unresponsive = True
+            return False
+
+        return True
+
+    def status_snapshot(self):
+        with self.condition:
+            thread_alive = self.thread is not None and self.thread.is_alive()
+            return {
+                "thread_alive": thread_alive,
+                "mailbox_depth": len(self.mailbox),
+                "running": self.current_job is not None,
+                "unresponsive": self.unresponsive,
+                "fallback_mode": "inert" if self.unresponsive else None,
+                "submitted": self.submitted,
+                "completed": self.completed,
+                "errors": self.errors,
+                "timeouts": self.timeouts,
+                "rejected": self.rejected
+            }
+
+
 
 
 class NPCManager(object):
@@ -1303,6 +1574,8 @@ class NPCManager(object):
             if npc in self.npcs:
                self.npcs.remove(npc)
 
+       npc.stop_actor()
+
    def _npc_is_active(self, npc):
        room = npc.room
 
@@ -1327,12 +1600,28 @@ class NPCManager(object):
        )
 
    def tick(self):
+       scheduled = []
+
        for npc in self.active_npcs_snapshot():
             if not self._npc_is_active(npc):
                 continue
 
             try:
-                npc.tick()
+                job = npc.schedule_behavior("tick")
+                scheduled.append((npc, job))
+            except Exception:
+                sys.stderr.write(
+                    "NPC tick failed for {0}.\n".format(npc.name)
+                )
+                traceback.print_exc()
+
+       deadline = time.monotonic() + NPC_CALLBACK_TIMEOUT
+
+       for npc, job in scheduled:
+            remaining = max(0.0, deadline - time.monotonic())
+
+            try:
+                npc.await_behavior(job, remaining)
             except Exception:
                 sys.stderr.write(
                     "NPC tick failed for {0}.\n".format(npc.name)
@@ -1376,35 +1665,51 @@ class NPCManager(object):
        return True
    
    def stop(self, timeout=None):
-       with self.lock:
-           self.running = False
-           ticker_thread = self._ticker_thread
-
-       self._stop_event.set()
-
-       if ticker_thread is None or not ticker_thread.is_alive():
-           return
-
-       if ticker_thread is threading.current_thread():
-           return
-
        if timeout is None:
            timeout = TICK_DELAY + 1.0
 
-       ticker_thread.join(timeout)
+       deadline = time.monotonic() + max(0.0, timeout)
 
-       if ticker_thread.is_alive():
-           sys.stderr.write(
-               "NPC ticker did not stop within {0:.1f} seconds.\n".format(
-                   timeout
+       with self.lock:
+           self.running = False
+           ticker_thread = self._ticker_thread
+           npcs = list(self.npcs)
+
+       self._stop_event.set()
+
+       if (
+           ticker_thread is not None
+           and ticker_thread.is_alive()
+           and ticker_thread is not threading.current_thread()
+       ):
+           ticker_thread.join(max(0.0, timeout))
+
+           if ticker_thread.is_alive():
+               sys.stderr.write(
+                   "NPC ticker did not stop within {0:.1f} seconds.\n".format(
+                       timeout
+                   )
                )
-           )
+
+       for npc in npcs:
+           remaining = max(0.0, deadline - time.monotonic())
+
+           if not npc.actor.stop(min(NPC_ACTOR_STOP_TIMEOUT, remaining)):
+               sys.stderr.write(
+                   "NPC actor did not stop for {0}.\n".format(npc.name)
+               )
 
 
 class NPC(Entity):
     """A living non-player character."""
 
-    def __init__(self, name, description="", behavior=None):
+    def __init__(
+        self,
+        name,
+        description="",
+        behavior=None,
+        actor_settings=None
+    ):
         Entity.__init__(self, name, description)
 
         self.room = None
@@ -1412,6 +1717,7 @@ class NPC(Entity):
         self.keywords = []
         self.inventory = []
         self.behavior = None
+        self.actor = NPCActor(self, **(actor_settings or {}))
 
         if behavior is None:
             behavior = NPCBehavior()
@@ -1436,15 +1742,51 @@ class NPC(Entity):
         if previous_behavior is not None:
             previous_behavior.unbind(self)
 
-    def _run_behavior(self, method_name, *arguments):
+    def _run_behavior_direct(self, method_name, *arguments):
         callback = getattr(self.behavior, method_name)
         result = callback(*arguments)
         actions = self._normalize_actions(result)
-
-        for action in actions:
-            self.perform_action(action)
-
         return actions
+
+    def schedule_behavior(self, method_name, *arguments):
+        return self.actor.submit(method_name, arguments)
+
+    def await_behavior(self, job, timeout=NPC_CALLBACK_TIMEOUT):
+        if job.event.is_set():
+            if job.error is not None:
+                raise job.error
+
+            result = job.result
+        else:
+            result = self.actor.wait(
+                job,
+                min(timeout, self.actor.callback_timeout)
+            )
+
+        with job.action_lock:
+            if not job.actions_performed:
+                job.actions_performed = True
+
+                for action in result:
+                    self.perform_action(action)
+
+        return result
+
+    def _run_behavior(self, method_name, *arguments):
+        detached = self.room is None
+
+        try:
+            job = self.schedule_behavior(method_name, *arguments)
+            return self.await_behavior(job)
+        finally:
+            if detached:
+                self.stop_actor()
+
+    def stop_actor(self):
+        return self.actor.stop()
+
+    def actor_status_snapshot(self):
+        return self.actor.status_snapshot()
 
     def _normalize_actions(self, result):
         if result is None:
