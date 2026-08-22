@@ -1,11 +1,11 @@
 import collections
 import threading
 import time
-import traceback
-import sys
 import random
 import math
 import unicodedata
+
+from operational_log import log_event, log_exception
 
 TICK_DELAY = 3.0
 NPC_CALLBACK_TIMEOUT = 1.0
@@ -284,8 +284,8 @@ class Room(object):
             try:
                 job = npc.schedule_behavior(method_name, *arguments)
                 scheduled.append((npc, job))
-            except Exception:
-                self._report_npc_event_failure(method_name, npc)
+            except Exception as error:
+                self._report_npc_event_failure(method_name, npc, error)
 
         deadline = time.monotonic() + NPC_CALLBACK_TIMEOUT
 
@@ -294,18 +294,17 @@ class Room(object):
 
             try:
                 npc.await_behavior(job, remaining)
-            except Exception:
-                self._report_npc_event_failure(method_name, npc)
+            except Exception as error:
+                self._report_npc_event_failure(method_name, npc, error)
 
     @staticmethod
-    def _report_npc_event_failure(method_name, npc):
-        sys.stderr.write(
-            "NPC event {0} failed for {1}.\n".format(
-                method_name,
-                npc.name
-            )
+    def _report_npc_event_failure(method_name, npc, error):
+        log_exception(
+            "npc.event_error",
+            error,
+            method=method_name,
+            npc=npc.name
         )
-        traceback.print_exc()
 
     def describe_to(self, player):
         player.session.send("")
@@ -1400,6 +1399,11 @@ class NPCActor(object):
         with self.condition:
             if not self._start_locked():
                 self.rejected += 1
+                log_event(
+                    "npc.actor_rejected",
+                    npc=self.npc.name,
+                    reason="inert_fallback"
+                )
                 raise NPCActorUnavailable(
                     "NPC actor is using inert fallback"
                 )
@@ -1410,6 +1414,11 @@ class NPCActor(object):
 
             if len(self.mailbox) >= self.mailbox_limit:
                 self.rejected += 1
+                log_event(
+                    "npc.actor_rejected",
+                    npc=self.npc.name,
+                    reason="mailbox_full"
+                )
                 raise NPCActorUnavailable("NPC actor mailbox is full")
 
             job = NPCActorJob(method_name, arguments)
@@ -1451,6 +1460,12 @@ class NPCActor(object):
             self.unresponsive = True
             self.closing = True
             self.timeouts += 1
+            log_event(
+                "npc.actor_timeout",
+                method=timed_out_job.method_name,
+                npc=self.npc.name,
+                fallback="inert"
+            )
             timed_out_job.complete(error=NPCActorTimeout(
                 "NPC callback did not return"
             ))
@@ -1496,8 +1511,27 @@ class NPCActor(object):
 
                     if error is None:
                         self.completed += 1
+
+                        if result:
+                            log_event(
+                                "npc.decision",
+                                actions=len(result),
+                                method=job.method_name,
+                                mode=self.npc.behavior_mode,
+                                npc=self.npc.name,
+                                room=None if self.npc.room is None else (
+                                    self.npc.room.room_id
+                                )
+                            )
                     else:
                         self.errors += 1
+                        log_exception(
+                            "npc.callback_error",
+                            error,
+                            method=job.method_name,
+                            mode=self.npc.behavior_mode,
+                            npc=self.npc.name
+                        )
 
                 if self.unresponsive:
                     return
@@ -1630,11 +1664,12 @@ class NPCManager(object):
             try:
                 job = npc.schedule_behavior("tick")
                 scheduled.append((npc, job))
-            except Exception:
-                sys.stderr.write(
-                    "NPC tick failed for {0}.\n".format(npc.name)
+            except Exception as error:
+                log_exception(
+                    "npc.tick_error",
+                    error,
+                    npc=npc.name
                 )
-                traceback.print_exc()
 
        deadline = time.monotonic() + NPC_CALLBACK_TIMEOUT
 
@@ -1643,11 +1678,12 @@ class NPCManager(object):
 
             try:
                 npc.await_behavior(job, remaining)
-            except Exception:
-                sys.stderr.write(
-                    "NPC tick failed for {0}.\n".format(npc.name)
+            except Exception as error:
+                log_exception(
+                    "npc.tick_error",
+                    error,
+                    npc=npc.name
                 )
-                traceback.print_exc()
 
    def _run_ticker_thread(self):
        while not self._stop_event.wait(TICK_DELAY):
@@ -1706,18 +1742,18 @@ class NPCManager(object):
            ticker_thread.join(max(0.0, timeout))
 
            if ticker_thread.is_alive():
-               sys.stderr.write(
-                   "NPC ticker did not stop within {0:.1f} seconds.\n".format(
-                       timeout
-                   )
+               log_event(
+                   "npc.ticker_stop_timeout",
+                   timeout=timeout
                )
 
        for npc in npcs:
            remaining = max(0.0, deadline - time.monotonic())
 
            if not npc.actor.stop(min(NPC_ACTOR_STOP_TIMEOUT, remaining)):
-               sys.stderr.write(
-                   "NPC actor did not stop for {0}.\n".format(npc.name)
+               log_event(
+                   "npc.actor_stop_timeout",
+                   npc=npc.name
                )
 
 

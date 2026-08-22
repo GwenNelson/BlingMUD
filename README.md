@@ -34,6 +34,8 @@ Runtime limits are intentionally modest: 64 total connections, 32 login connecti
 
 Active characters are considered for autosave every 60 seconds. The engine serializes only characters whose state lock is immediately available, compares the bounded JSON snapshot with the last submitted snapshot, and sends changed state to one coalescing persistence writer. Busy characters are retried on the next pass. Logout waits for its final queued snapshot; server shutdown gives gameplay workers and the writer one shared ten-second flush deadline and reports anything that fails to stop.
 
+Operational events are written to standard error as bounded JSON Lines. They cover server and connection lifecycle, authentication outcomes and rate limits, persistence, room-local command triggers, NPC decision/failure metadata, and admin actions. Logs neutralize control characters, redact secret-like fields, and omit passwords, hashes, prompts, player chat/emotes, command arguments, admin reason text, NPC output text, serialized state, exception messages, and tracebacks. `BLINGMUD_SUPPRESS_OPERATIONAL_LOG=1` exists for the repository's deterministic test runner; production diagnostics are enabled by default.
+
 The listener defaults to `0.0.0.0:4000`. Operators may set `BLINGMUD_HOST` and `BLINGMUD_PORT`; invalid values stop startup instead of silently choosing another address.
 
 The goal is to scale to groups of 10-20 active users at most and again to make it fun.

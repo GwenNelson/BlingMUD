@@ -13,7 +13,7 @@ Agent instructions
 Summary
 
 - I reviewed the codebase first so the plan is anchored in what already exists rather than in the email ideas alone.
-- The original engine fixes, generic local NPC behaviors, Brave Sir Knight migration, minimum character persistence, room-aware heartbeat scheduling, possum encounter, Green/canopy slice, and initial Val/tavern slice are now implemented. The next work should begin with a fresh bug/security audit, then continue the remaining persistence/admin and village milestones without adding OpenRouter until the user explicitly authorizes it.
+- The original engine fixes, generic local NPC behaviors, Brave Sir Knight migration, minimum character persistence, room-aware heartbeat scheduling, possum encounter, Green/canopy slice, initial Val/tavern slice, core admin operations, and bounded structured operational logging are now implemented. The next work should begin with a fresh bug/security audit, then continue the remaining village and non-LLM tooling milestones without adding OpenRouter until the user explicitly authorizes it.
 - This plan is meant to be a living document you can keep on disk and revisit over multiple sessions.
 
 First fixes
@@ -32,7 +32,7 @@ First fixes
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, prominent plaintext-Telnet warnings at startup and before authentication, deliberate hidden-input echo/redraw suppression, selector-owned sockets/pre-auth/timeouts/output, bounded authentication workers and rate limits, one sequential gameplay worker per authenticated player, one shared incremental Telnet/UTF-8 parser with safe command-token completion, validated global/room command specs and generated help, room-first ordinary dispatch with protected safety/admin names and duplicate-registration rejection, item/slot-aware `/unequip` with `/remove` alias, admin-only confirmed shutdown/output-preserving kick/shared-API heal/focused-or-bulk save/bounded status views, 60-second dirty-only character and shared-world autosave, separate bounded/coalescing character and one-key world writers with final saves inside the ten-second graceful deadline, callback-complete queue rejection, transactional SQLite schema migrations through version 2, bounded character JSON v2 with v1/legacy migration and six whitelisted items, durable recent-collapse/status timestamps and safe offline intoxication decay, strict version-1 world JSON for acorn/Wisp state, matching gameplay inventory/room-item limits, centralized bounded damage/healing/intoxication APIs, one-damage falling acorns, five-damage Val cats, non-destructive zero-health collapse/return to Town Square, recent-collapse recognition by Val, non-blocking one-point-per-minute online intoxication decay, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, per-NPC bounded actor isolation with inert timeout fallback and no replacement workers, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured NPC actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, the first Village Green/Hanging Tree/Wisp Mother slice, the initial Val's Hella Holler/Val/fixed-drink slice, and regression coverage for all of them.
+- Implemented now: the first-fix engine bugs above, prominent plaintext-Telnet warnings at startup and before authentication, deliberate hidden-input echo/redraw suppression, selector-owned sockets/pre-auth/timeouts/output, bounded authentication workers and rate limits, one sequential gameplay worker per authenticated player, one shared incremental Telnet/UTF-8 parser with safe command-token completion, validated global/room command specs and generated help, room-first ordinary dispatch with protected safety/admin names and duplicate-registration rejection, item/slot-aware `/unequip` with `/remove` alias, admin-only confirmed shutdown/output-preserving kick/shared-API heal/focused-or-bulk save/bounded status views, bounded JSON-lines operational events for authentication/connection/server/admin/persistence/room/NPC metadata with conservative redaction and exception-type-only failures, 60-second dirty-only character and shared-world autosave, separate bounded/coalescing character and one-key world writers with final saves inside the ten-second graceful deadline, callback-complete queue rejection, transactional SQLite schema migrations through version 2, bounded character JSON v2 with v1/legacy migration and six whitelisted items, durable recent-collapse/status timestamps and safe offline intoxication decay, strict version-1 world JSON for acorn/Wisp state, matching gameplay inventory/room-item limits, centralized bounded damage/healing/intoxication APIs, one-damage falling acorns, five-damage Val cats, non-destructive zero-health collapse/return to Town Square, recent-collapse recognition by Val, non-blocking one-point-per-minute online intoxication decay, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, per-NPC bounded actor isolation with inert timeout fallback and no replacement workers, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured NPC actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, the first Village Green/Hanging Tree/Wisp Mother slice, the initial Val's Hella Holler/Val/fixed-drink slice, and regression coverage for all of them.
 - Still planned: richer status effects, renewable but bounded village ecology, optional structured NPC memory, the `llm_fsm` advisory wrapper and OpenRouter failover, popularity/priority budgeting, advanced admin brain/memory/mode/reload tools, Corbel and the village economy, richer custom horn drinks/food/prices/regulars, and the remaining village content from the email threads. Core admin shutdown/kick/heal/save/status operations are implemented. TLS and encrypted transport are explicitly excluded from this implementation plan; the residual plaintext risk is accepted and must remain honestly documented.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 - OpenRouter remains design-only and explicitly deferred; implementation requires a later, explicit user authorization.
@@ -130,7 +130,8 @@ Admin and operational tooling
 - Add commands to reload NPC definitions and content without restarting the server.
 - Add a command to force brain failover and another to force a health probe, so the fallback path can be tested live.
 - Add a safe player-state inspection and reset tool for debugging corrupted saves.
-- Improve logging around login, save/load, room triggers, NPC decisions, LLM calls, and fallback events.
+- [done: local operations] `operational_log.py` writes bounded JSON-lines events for authentication/rate limiting, connection/server lifecycle, persistence, room-local triggers, NPC decisions/failures, and admin actions. Controls are neutralized, secret-like field names are redacted, reserved metadata is protected, and sink failures cannot break gameplay. Exception events contain only a type. Logs deliberately omit passwords/hashes, chat/emotes, prompts, command arguments, admin reason text, NPC output, and serialized state.
+- Extend that event contract to future LLM calls, budget decisions, circuit-breaker transitions, health probes, fallback, and recovery. Provider keys and prompt/response content must remain absent by default.
 - Keep the server MOTD and session-only admin password flow. Core status reporting is implemented; later diagnostics must retain the current bounds and secret-redaction invariant.
 
 Faithful implementation of the email content
@@ -476,7 +477,7 @@ Implementation order
 - Phase 1: [done] fix the concrete engine/security bugs, deliver versioned player persistence through version 2, save/load on login and disconnect, and add bounded dirty-only periodic autosave.
 - Phase 2: [done] the generic behavior system, Brave Sir Knight migration, room activity metrics, global empty-room heartbeat suspension, and bounded per-NPC callback isolation are complete.
 - Phase 3: add OpenRouter integration, circuit breaker failover, structured JSON output, and priority budgeting for LLM-capable NPCs.
-- Phase 4: [partly done] core shutdown/kick/heal/save/status and room/NPC actor inspection are implemented; future NPC mode, LLM health/budget, memory, safe-reset, and reload controls remain.
+- Phase 4: [partly done] core shutdown/kick/heal/save/status, room/NPC actor inspection, and bounded local operational logging are implemented; future NPC mode, LLM health/budget, memory, safe-reset, and reload controls remain.
 - Phase 5: implement the village content as data-driven rooms, NPCs, items, room triggers, and status effects.
 - Phase 6: add tests and regression coverage for the new architecture and the email-driven gameplay.
 
@@ -499,6 +500,7 @@ Test plan
 - The implemented minimum-layer tests now cover room/inventory/equipment/stat round trips including health, maximum health, intoxication, and all six item templates; legacy empty state and older version-1 health defaults; corrupt/oversized/unknown/inconsistent state rejection; safe room fallback; versioned new accounts; login restoration; logout ordering; failed-save preservation; session-only admin state; bounded input; and bounded password work. General status effects remain unimplemented and therefore are still a future test target.
 - Shared-world tests cover version/range/size/exact-key/consistency rejection, atomic restoration, acorn and Wisp round trips, SQLite initialization/update, Wisp actor reconciliation, dirty-only asynchronous saves, immediate queue rejection callbacks, and successful retry.
 - Admin tests cover privilege-gated generated metadata, shutdown confirmation and announcement, output-draining control, bounded kick reasons, shared healing clamps, focused/world/bulk save behavior, status views, and finite player-state-lock acquisition before a waiting save.
+- Operational-log tests cover JSON framing, field/line bounds, control neutralization, secret-field redaction, protected metadata, broken sinks, exception-message omission, and the invariant that admin reason text never enters an action event.
 - Verify the new room interactions from the email: `harvest acorn`, `browse scrap`, `talk eisele`, `read book`, `look mirror`, and the Wisp Mother / Val reaction paths.
 - Verify that the new content does not break the existing Crossroads and Fabulous Chamber demo rooms.
 
@@ -782,6 +784,7 @@ What exists vs what is still planned
 - Existing today:
   - selector-owned Telnet sockets, pre-auth input/timeouts, and bounded queued output
   - a bounded two-worker authentication pool and selector-driven login/character creation state machine
+  - bounded, control-safe JSON-lines operational metadata for login/rate limits, connections, startup/shutdown, persistence, room triggers, NPC decisions/failures, and admin actions, with secret-field redaction and no transcript/state/exception-message logging
   - one sequential gameplay worker per authenticated player, preserving the simple `Session` API
   - hard total/pre-auth/authenticated/per-IP connection limits, login/account-creation rate limits, and pre-auth plus 10h/12h authenticated idle policy
   - 60-second dirty-only character autosave through one 64-key coalescing persistence writer, with retryable failures and a shared ten-second graceful-shutdown deadline
@@ -812,7 +815,7 @@ What exists vs what is still planned
   - budgeted NPC priority system
   - advanced admin NPC-memory/LLM-budget/brain-health/mode/reload controls; core shutdown/kick/heal/save/status and room/NPC actor inspection are implemented
   - the remaining email-driven village content, including Corbel's acorn economy, Val's food/prices/regular memory and richer horn output, remaining Wisp reactions, and durable shared world state
-  - structured room/NPC event schemas
+  - broader data-driven room/NPC event schemas for authoring; operational room-trigger and NPC-decision metadata is implemented
   - content data loading / world authoring layer
   - no in-repository TLS work: plaintext Telnet remains an explicitly accepted residual risk that operators must control and warnings must describe honestly
 
@@ -867,7 +870,7 @@ Milestone 5: add admin and persistence tooling
 - Add admin views for future budgets, structured memory, and brain health.
 - Add NPC mode switching for debugging.
 - Add save inspection and safe reset tools.
-- Add logging for all important state transitions.
+- [partly done] Bounded structured logging covers current authentication, connection/server lifecycle, persistence, room-local command triggers, NPC decisions/failures, and admin actions. Add future LLM budget/provider/fallback/recovery transitions when that subsystem is explicitly authorized, while continuing to omit prompt and response content.
 - Add world reload commands where safe.
 
 Milestone 6: implement the email content faithfully

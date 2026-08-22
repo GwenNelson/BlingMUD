@@ -16,7 +16,8 @@ import socket
 import sys
 import threading
 import time
-import traceback
+
+from operational_log import log_event, log_exception
 
 from telnet_parser import (
     BackspaceInputEvent,
@@ -207,13 +208,23 @@ class BoundedWorkerPool(object):
             except Exception as error:
                 try:
                     callback(None, error)
-                except Exception:
-                    traceback.print_exc(file=sys.stderr)
+                except Exception as callback_error:
+                    log_exception(
+                        "worker.callback_error",
+                        callback_error,
+                        pool="authentication",
+                        result="worker_failed"
+                    )
             else:
                 try:
                     callback(result, None)
-                except Exception:
-                    traceback.print_exc(file=sys.stderr)
+                except Exception as callback_error:
+                    log_exception(
+                        "worker.callback_error",
+                        callback_error,
+                        pool="authentication",
+                        result="worker_succeeded"
+                    )
 
     def shutdown(self):
         with self.lock:
@@ -456,12 +467,16 @@ class SelectorConnection(object):
         elif self.line_handler is not None:
             try:
                 self.line_handler(line)
-            except Exception:
+            except Exception as error:
                 sys.stderr.write(
                     "Pre-authentication input handler failed; closing "
                     "that connection.\n"
                 )
-                traceback.print_exc(file=sys.stderr)
+                log_exception(
+                    "connection.preauth_handler_error",
+                    error,
+                    ip=self.ip_address
+                )
                 self.request_close()
 
     def _deliver_tab(self, event):
@@ -651,6 +666,11 @@ class SelectorMudServer(object):
             )
 
             if reason is not None:
+                log_event(
+                    "connection.rejected",
+                    ip=ip_address,
+                    reason=reason
+                )
                 self._reject_socket(client_socket, reason)
                 continue
 
@@ -662,6 +682,12 @@ class SelectorMudServer(object):
             )
             with self.connections_lock:
                 self.connections.add(connection)
+                connection_count = len(self.connections)
+            log_event(
+                "connection.accepted",
+                ip=ip_address,
+                connections=connection_count
+            )
             self.selector.register(
                 client_socket,
                 selectors.EVENT_READ,
@@ -670,12 +696,16 @@ class SelectorMudServer(object):
 
             try:
                 self.connection_started(self, connection)
-            except Exception:
+            except Exception as error:
                 sys.stderr.write(
                     "Connection initialization failed; closing that "
                     "connection.\n"
                 )
-                traceback.print_exc(file=sys.stderr)
+                log_exception(
+                    "connection.initialization_error",
+                    error,
+                    ip=ip_address
+                )
                 self._close_connection(connection)
 
     def _read_ready(self, connection):
@@ -806,6 +836,13 @@ class SelectorMudServer(object):
         connection.mark_closed()
         with self.connections_lock:
             self.connections.discard(connection)
+            connection_count = len(self.connections)
+        log_event(
+            "connection.closed",
+            authenticated=connection.authenticated,
+            connections=connection_count,
+            ip=connection.ip_address
+        )
 
     def _check_idle_connections(self):
         now = self.time_source()
@@ -839,11 +876,15 @@ class SelectorMudServer(object):
         for callback in list(self.maintenance_callbacks):
             try:
                 callback()
-            except Exception:
+            except Exception as error:
                 sys.stderr.write(
                     "Selector maintenance callback failed.\n"
                 )
-                traceback.print_exc(file=sys.stderr)
+                log_exception(
+                    "server.maintenance_error",
+                    error,
+                    callback=getattr(callback, "__name__", "unknown")
+                )
 
     def serve_once(self, timeout=SELECT_TIMEOUT_SECONDS):
         self.auth_pool.drain()

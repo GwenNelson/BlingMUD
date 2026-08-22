@@ -17,9 +17,9 @@ import hashlib
 import hmac
 import sys
 import threading
-import traceback
 import unicodedata
 
+from operational_log import log_event, log_exception
 from server_runtime import SelectorMudServer
 from persistence_runtime import (
     AutosaveCoordinator,
@@ -532,15 +532,30 @@ class AdminCommand(Command):
 
                try:
                    write_admin_password_hash(upgraded_hash)
-               except OSError:
+               except OSError as error:
                    print("WARNING: could not upgrade admin password hash.")
+                   log_exception(
+                       "admin.password_hash_upgrade",
+                       error,
+                       result="failed"
+                   )
                else:
                    ADMIN_PASSWORD_HASH = upgraded_hash
 
            session.player.is_admin = True
            session.send("Reality bends to your will")
+           log_event(
+               "admin.authentication",
+               player=session.player.name,
+               result="success"
+           )
         else:
            session.send("Be gone! That is not the magic word!")
+           log_event(
+               "admin.authentication",
+               player=session.player.name,
+               result="failed"
+           )
 
 
 @register_command
@@ -582,6 +597,11 @@ class ShutdownCommand(Command):
         for active_session in active_sessions_snapshot():
             active_session.send(message)
 
+        log_event(
+            "admin.shutdown",
+            actor=session.player.name,
+            reason_supplied=bool(reason)
+        )
         server.request_graceful_shutdown(1.0)
 
 
@@ -620,6 +640,12 @@ class KickCommand(Command):
 
         target_name = target.player.name
         target.request_kick(session.player.name, reason)
+        log_event(
+            "admin.kick",
+            actor=session.player.name,
+            target=target_name,
+            reason_supplied=bool(reason)
+        )
         session.send("Kick requested for {0}.".format(target_name))
 
 
@@ -703,6 +729,12 @@ class HealCommand(Command):
                 healed
             )
         )
+        log_event(
+            "admin.heal",
+            actor=session.player.name,
+            amount=healed,
+            target=target_name
+        )
 
         if target is not session:
             session.send(
@@ -742,6 +774,12 @@ class SaveCommand(Command):
             session.send(
                 "Save pass: {0}; world={1}.".format(summary, world_result)
             )
+            log_event(
+                "admin.save",
+                actor=session.player.name,
+                mode="all",
+                world_result=world_result
+            )
             return
 
         if wanted.lower() == "world":
@@ -754,6 +792,12 @@ class SaveCommand(Command):
                 timeout=2.0
             )
             session.send("World save result: {0}.".format(result))
+            log_event(
+                "admin.save",
+                actor=session.player.name,
+                mode="world",
+                result=result
+            )
             return
 
         target = session if not wanted else find_active_session(wanted)
@@ -766,6 +810,13 @@ class SaveCommand(Command):
         result = target.save_if_changed(wait=True, timeout=2.0)
         session.send(
             "Character save for {0}: {1}.".format(target_name, result)
+        )
+        log_event(
+            "admin.save",
+            actor=session.player.name,
+            mode="character",
+            result=result,
+            target=target_name
         )
 
 
@@ -783,6 +834,12 @@ class AdminStatusCommand(Command):
         if wanted not in ("", "rooms", "npcs"):
             session.send("Usage: {0}".format(self.usage))
             return
+
+        log_event(
+            "admin.status",
+            actor=session.player.name,
+            view=wanted or "summary"
+        )
 
         if wanted == "rooms":
             rooms = sorted(
@@ -1442,6 +1499,14 @@ class Session(object):
                 account = load_user(name)
 
             if account is None:
+                log_event(
+                    "auth.login",
+                    ip=str(self.address[0]),
+                    player=name,
+                    result="failed",
+                    reason="unknown_account",
+                    transport="blocking_compatibility"
+                )
                 self.send("No such user")
                 self.send("Are you new? We told you to type NEWUSER, but never mind, maybe we should do that for you?")
                 self.send("If you're not new, maybe disconnect and reconnect - and mind your typos!")
@@ -1481,15 +1546,44 @@ class Session(object):
 
             if len(password) > MAX_PASSWORD_LENGTH:
                 self.send("That password is too long.")
+                log_event(
+                    "auth.login",
+                    ip=str(self.address[0]),
+                    player=name,
+                    result="failed",
+                    reason="password_too_long",
+                    transport="blocking_compatibility"
+                )
                 continue
 
             if not verify_password(password, account["password"]):
                 self.send("Incorrect password.")
+                log_event(
+                    "auth.login",
+                    ip=str(self.address[0]),
+                    player=name,
+                    result="failed",
+                    reason="wrong_password",
+                    transport="blocking_compatibility"
+                )
                 continue
 
             if password_hash_needs_upgrade(account["password"]):
-                with USERS_LOCK:
-                    update_user_password_hash(name, password_hash(password))
+                try:
+                    upgraded_hash = password_hash(password)
+
+                    with USERS_LOCK:
+                        update_user_password_hash(name, upgraded_hash)
+                except (OSError, sqlite3.Error, ValueError) as error:
+                    sys.stderr.write(
+                        "Could not upgrade a player password hash.\n"
+                    )
+                    log_exception(
+                        "auth.password_hash_upgrade",
+                        error,
+                        player=name,
+                        result="failed"
+                    )
 
             player = Player(account["username"])
             player.session = self
@@ -1506,6 +1600,11 @@ class Session(object):
                     "Invalid saved state for {0}; using safe defaults.\n".format(
                         account["username"]
                     )
+                )
+                log_event(
+                    "persistence.character_load",
+                    player=account["username"],
+                    result="invalid_state_reset"
                 )
                 invalid_state = True
                 login_room = self.world.starting_room
@@ -1530,6 +1629,14 @@ class Session(object):
                 )
 
             self.set_persisted_state(account["state_json"])
+            log_event(
+                "auth.login",
+                ip=str(self.address[0]),
+                player=player.name,
+                result="success",
+                state_reset=invalid_state,
+                transport="blocking_compatibility"
+            )
 
             return True
 
@@ -1615,6 +1722,12 @@ class Session(object):
             self.set_persisted_state(new_player_state_json())
 
             self.send("Account created.")
+            log_event(
+                "auth.account_created",
+                ip=str(self.address[0]),
+                player=self.player.name,
+                transport="blocking_compatibility"
+            )
             return True
 
         return False
@@ -1745,6 +1858,12 @@ class Session(object):
                 command_name,
                 arguments
             ):
+                log_event(
+                    "room.command",
+                    command=command_name,
+                    player=self.player.name,
+                    room=room.room_id
+                )
                 return
 
         command = COMMANDS.get(command_name)
@@ -1791,8 +1910,12 @@ class Session(object):
 
             self._gameplay_loop()
 
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            log_exception(
+                "session.gameplay_error",
+                error,
+                transport="blocking_compatibility"
+            )
 
         finally:
             self.disconnect()
@@ -1802,8 +1925,12 @@ class Session(object):
         try:
             self._gameplay_loop()
 
-        except Exception:
-            traceback.print_exc()
+        except Exception as error:
+            log_exception(
+                "session.gameplay_error",
+                error,
+                transport="selector"
+            )
 
         finally:
             self.disconnect()
@@ -1859,10 +1986,21 @@ class Session(object):
 
             if save_result == "failed":
                 sys.stderr.write(
-                    "Could not save player state for {0}: {1}\n".format(
-                        player.name,
-                        self.last_save_error
+                    "Could not save player state for {0}.\n".format(
+                        player.name
                     )
+                )
+                log_exception(
+                    "persistence.final_save",
+                    self.last_save_error or RuntimeError("save failed"),
+                    player=player.name,
+                    result="failed"
+                )
+            else:
+                log_event(
+                    "persistence.final_save",
+                    player=player.name,
+                    result=save_result
                 )
 
             with self.state_lock:
@@ -2012,10 +2150,13 @@ def _authenticate_account(account, password, world):
                 update_user_password_hash(account["username"], upgraded_hash)
         except (OSError, sqlite3.Error, ValueError) as error:
             sys.stderr.write(
-                "Could not upgrade password hash for {0}: {1}\n".format(
-                    account["username"],
-                    error
-                )
+                "Could not upgrade a player password hash.\n"
+            )
+            log_exception(
+                "auth.password_hash_upgrade",
+                error,
+                player=account["username"],
+                result="failed"
             )
 
     player = Player(account["username"])
@@ -2027,11 +2168,17 @@ def _authenticate_account(account, password, world):
             account["state_json"],
             world
         )
-    except PlayerStateError:
+    except PlayerStateError as error:
         sys.stderr.write(
             "Invalid saved state for {0}; using safe defaults.\n".format(
                 account["username"]
             )
+        )
+        log_exception(
+            "persistence.character_load",
+            error,
+            player=account["username"],
+            result="invalid_state_reset"
         )
         invalid_state = True
         login_room = world.starting_room
@@ -2166,6 +2313,11 @@ class PreAuthController(object):
         self.session.send(
             "The login workers are busy. Please try that line again."
         )
+        log_event(
+            "auth.worker_busy",
+            ip=self.connection.ip_address,
+            state=self.state
+        )
         self._repeat_prompt()
         return False
 
@@ -2217,6 +2369,12 @@ class PreAuthController(object):
                 "Too many failed logins for that account from this address. "
                 "Please wait five minutes."
             )
+            log_event(
+                "auth.rate_limited",
+                ip=self.connection.ip_address,
+                player=name,
+                operation="login"
+            )
             self.connection.request_close_after_output()
             return
 
@@ -2230,6 +2388,12 @@ class PreAuthController(object):
     def _account_loaded(self, account, error):
         if error is not None:
             self.session.send("Login storage is temporarily unavailable.")
+            log_exception(
+                "auth.storage_error",
+                error,
+                ip=self.connection.ip_address,
+                operation="load_account"
+            )
             self._prompt_name()
             return
 
@@ -2238,6 +2402,15 @@ class PreAuthController(object):
             attempts = self.server.rate_limiter.record_authentication_failure(
                 self.connection.ip_address,
                 self.requested_name
+            )
+            log_event(
+                "auth.login",
+                attempts=attempts,
+                ip=self.connection.ip_address,
+                player=self.requested_name,
+                reason="unknown_account",
+                result="failed",
+                transport="selector"
             )
 
             if attempts >= 5:
@@ -2259,7 +2432,7 @@ class PreAuthController(object):
 
         if len(password) > MAX_PASSWORD_LENGTH:
             self.session.send("That password is too long.")
-            self._record_failed_login()
+            self._record_failed_login("password_too_long")
             return
 
         self._submit(
@@ -2270,10 +2443,19 @@ class PreAuthController(object):
             self.session.world
         )
 
-    def _record_failed_login(self):
+    def _record_failed_login(self, reason="wrong_password"):
         attempts = self.server.rate_limiter.record_authentication_failure(
             self.connection.ip_address,
             self.account["username"]
+        )
+        log_event(
+            "auth.login",
+            attempts=attempts,
+            ip=self.connection.ip_address,
+            player=self.account["username"],
+            reason=reason,
+            result="failed",
+            transport="selector"
         )
 
         if attempts >= 5:
@@ -2287,12 +2469,18 @@ class PreAuthController(object):
     def _authentication_finished(self, result, error):
         if error is not None:
             self.session.send("Login verification is temporarily unavailable.")
+            log_exception(
+                "auth.verification_error",
+                error,
+                ip=self.connection.ip_address,
+                player=self.account["username"]
+            )
             self._prompt_password()
             return
 
         if not result["authenticated"]:
             self.session.send("Incorrect password.")
-            self._record_failed_login()
+            self._record_failed_login("wrong_password")
             return
 
         self._finish_authenticated(
@@ -2323,6 +2511,12 @@ class PreAuthController(object):
     def _new_name_checked(self, available, error):
         if error is not None:
             self.session.send("Login storage is temporarily unavailable.")
+            log_exception(
+                "auth.storage_error",
+                error,
+                ip=self.connection.ip_address,
+                operation="check_new_name"
+            )
             self._prompt_new_name()
             return
 
@@ -2371,6 +2565,11 @@ class PreAuthController(object):
                 "Too many accounts have been created from this address "
                 "within the last hour."
             )
+            log_event(
+                "auth.rate_limited",
+                ip=self.connection.ip_address,
+                operation="account_creation"
+            )
             self.connection.request_close_after_output()
             return
 
@@ -2389,6 +2588,12 @@ class PreAuthController(object):
                 self.connection.ip_address
             )
             self.session.send("The account could not be created right now.")
+            log_exception(
+                "auth.storage_error",
+                error,
+                ip=self.connection.ip_address,
+                operation="create_account"
+            )
             self._prompt_new_name()
             return
 
@@ -2404,6 +2609,12 @@ class PreAuthController(object):
 
         player = Player(self.new_name)
         self.session.send("Account created.")
+        log_event(
+            "auth.account_created",
+            ip=self.connection.ip_address,
+            player=player.name,
+            transport="selector"
+        )
         self._finish_authenticated(
             player,
             self.session.world.starting_room,
@@ -2450,6 +2661,14 @@ class PreAuthController(object):
             player.name
         )
         self.session.set_persisted_state(stored_state)
+        log_event(
+            "auth.login",
+            ip=self.connection.ip_address,
+            player=player.name,
+            result="success",
+            state_reset=invalid_state,
+            transport="selector"
+        )
         self.account = None
         self.requested_name = None
         self.new_name = None
@@ -2483,27 +2702,39 @@ def main():
     try:
         host, port = configured_server_address()
     except ValueError as error:
-        sys.stderr.write("Configuration error: {0}\n".format(error))
+        sys.stderr.write("BlingMUD configuration is invalid.\n")
+        log_exception("server.configuration_error", error)
         return 2
 
     try:
         init_user_database()
     except (DatabaseMigrationError, sqlite3.Error) as error:
-        sys.stderr.write("Database initialization failed: {0}\n".format(error))
+        sys.stderr.write("Database initialization failed.\n")
+        log_exception("persistence.database_initialization", error)
         return 2
 
-    stored_world_state = load_world_state()
+    try:
+        stored_world_state = load_world_state()
+    except sqlite3.Error as error:
+        sys.stderr.write("World-state loading failed.\n")
+        log_exception("persistence.world_load", error, result="failed")
+        return 2
+
     world_state_valid = True
 
     try:
         restore_world_state(WORLD.village_state, stored_world_state)
+        log_event("persistence.world_load", result="success")
     except WorldStateError as error:
         world_state_valid = False
         restore_world_state(WORLD.village_state, new_world_state_json())
         sys.stderr.write(
-            "Invalid saved world state; using safe defaults: {0}\n".format(
-                error
-            )
+            "Invalid saved world state; using safe defaults.\n"
+        )
+        log_exception(
+            "persistence.world_load",
+            error,
+            result="invalid_state_reset"
         )
 
     WORLD.synchronize_persisted_state()
@@ -2525,10 +2756,20 @@ def main():
     )
 
     if os.path.exists("admin.hash"):
-        with open("admin.hash", "r") as f:
-            ADMIN_PASSWORD_HASH = f.read().strip()
-
-        print("Admin password loaded.")
+        try:
+            with open("admin.hash", "r") as f:
+                ADMIN_PASSWORD_HASH = f.read().strip()
+        except OSError as error:
+            ADMIN_PASSWORD_HASH = None
+            print("WARNING: admin.hash could not be read.")
+            print("         Administrative commands are disabled.")
+            log_exception(
+                "admin.configuration",
+                error,
+                result="disabled"
+            )
+        else:
+            print("Admin password loaded.")
     else:
         print("WARNING: admin.hash not found.")
         print("         Administrative commands are disabled.")
@@ -2562,12 +2803,26 @@ def main():
         STATUS_COORDINATOR = None
         WORLD_STATE_WRITER = None
         WORLD_SAVE_COORDINATOR = None
-        sys.stderr.write("Could not bind BlingMUD listener: {0}\n".format(error))
+        sys.stderr.write("Could not bind the BlingMUD listener.\n")
+        log_exception(
+            "server.bind_error",
+            error,
+            host=host,
+            port=port
+        )
         return 1
 
     print("BLINGMUD listening on {0}:{1}".format(host, port))
     print("Connect with: telnet localhost {0}".format(port))
     print("Press Ctrl-C to stop.")
+    log_event(
+        "server.started",
+        host=host,
+        plaintext_telnet=True,
+        port=port
+    )
+
+    exit_code = 0
 
     try:
         NPC_MANAGER.start()
@@ -2575,7 +2830,13 @@ def main():
     except KeyboardInterrupt:
         print("")
         print("Shutting down BLINGMUD.")
+        log_event("server.stop_requested", source="keyboard_interrupt")
+    except Exception as error:
+        exit_code = 1
+        sys.stderr.write("BlingMUD stopped because of a runtime error.\n")
+        log_exception("server.runtime_error", error)
     finally:
+        log_event("server.stopping", sessions=len(active_sessions_snapshot()))
         NPC_MANAGER.stop()
         sessions = active_sessions_snapshot()
         server.shutdown()
@@ -2605,6 +2866,10 @@ def main():
                 "One or more gameplay workers did not stop within ten "
                 "seconds.\n"
             )
+            log_event(
+                "server.shutdown_timeout",
+                component="gameplay_workers"
+            )
 
         remaining = max(0.0, deadline - time.monotonic())
         world_save_result = WORLD_SAVE_COORDINATOR.save_if_changed(
@@ -2618,12 +2883,21 @@ def main():
                     world_save_result
                 )
             )
+            log_event(
+                "server.shutdown_timeout",
+                component="world_save",
+                result=world_save_result
+            )
 
         remaining = max(0.0, deadline - time.monotonic())
 
         if not PERSISTENCE_WRITER.flush(remaining):
             sys.stderr.write(
                 "Persistence flush did not finish within ten seconds.\n"
+            )
+            log_event(
+                "server.shutdown_timeout",
+                component="player_persistence_flush"
             )
 
         remaining = max(0.0, deadline - time.monotonic())
@@ -2632,12 +2906,20 @@ def main():
             sys.stderr.write(
                 "Persistence writer did not stop within ten seconds.\n"
             )
+            log_event(
+                "server.shutdown_timeout",
+                component="player_persistence_writer"
+            )
 
         remaining = max(0.0, deadline - time.monotonic())
 
         if not WORLD_STATE_WRITER.flush(remaining):
             sys.stderr.write(
                 "World-state flush did not finish within ten seconds.\n"
+            )
+            log_event(
+                "server.shutdown_timeout",
+                component="world_persistence_flush"
             )
 
         remaining = max(0.0, deadline - time.monotonic())
@@ -2646,14 +2928,19 @@ def main():
             sys.stderr.write(
                 "World-state writer did not stop within ten seconds.\n"
             )
+            log_event(
+                "server.shutdown_timeout",
+                component="world_persistence_writer"
+            )
 
         PERSISTENCE_WRITER = None
         AUTOSAVE_COORDINATOR = None
         STATUS_COORDINATOR = None
         WORLD_STATE_WRITER = None
         WORLD_SAVE_COORDINATOR = None
+        log_event("server.stopped", result=("clean" if exit_code == 0 else "error"))
 
-    return 0
+    return exit_code
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -1,7 +1,10 @@
+import io
+import json
 import unittest
 
 import blingmud
 from core import COMMANDS, Player, Room
+from operational_log import OPS_LOG
 
 
 class RecordingRequest(object):
@@ -177,6 +180,28 @@ class AdminCommandTests(unittest.TestCase):
 
         COMMANDS["adminstatus"].execute(self.admin, "rooms")
         self.assertIn("room start", self.transcript(self.admin_request))
+
+    def test_admin_log_records_action_without_reason_text(self):
+        sink = io.StringIO()
+        original_sink = OPS_LOG.sink
+        original_enabled = OPS_LOG.enabled
+        OPS_LOG.sink = sink
+        OPS_LOG.enabled = True
+
+        try:
+            COMMANDS["shutdown"].execute(
+                self.admin,
+                "now a private operator explanation"
+            )
+        finally:
+            OPS_LOG.sink = original_sink
+            OPS_LOG.enabled = original_enabled
+
+        document = json.loads(sink.getvalue())
+        self.assertEqual(document["event"], "admin.shutdown")
+        self.assertEqual(document["actor"], "Administrator")
+        self.assertTrue(document["reason_supplied"])
+        self.assertNotIn("private operator explanation", sink.getvalue())
 
 
 if __name__ == "__main__":

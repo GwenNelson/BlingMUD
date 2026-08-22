@@ -90,7 +90,8 @@ Admin / ops
 ☒ Add bounded `/adminstatus rooms` and `/adminstatus npcs` views for activity, behavior mode, actor fallback, queues, and errors.
 ☐ Extend admin inspection to future structured NPC memory, LLM budgets, and brain health after those systems exist.
 ☐ Add commands to force NPC mode changes for debugging.
-☐ Add logging around login, save/load, NPC decisions, and AI fallback.
+☒ Add bounded, control-safe JSON-lines operational logging for login/rate limits, connection and server lifecycle, character/world save/load, room-local triggers, NPC decisions/failures, and admin actions; redact secret-like fields and omit chat, prompts, command arguments, admin reason text, action text, serialized state, exception messages, and tracebacks.
+☐ Extend the same structured event contract to future LLM calls, budget decisions, circuit-breaker changes, health probes, and local fallback/recovery without ever logging provider keys or prompt/response content by default.
 ☐ Add safe reload/debug tools where they do not risk player state.
 
 Commands / UX

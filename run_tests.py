@@ -36,6 +36,7 @@ def main():
     environment = os.environ.copy()
     environment["TMPDIR"] = TEST_TEMP_ROOT
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["BLINGMUD_SUPPRESS_OPERATIONAL_LOG"] = "1"
 
     for unsafe_setting in (
         "PYTHONHOME",

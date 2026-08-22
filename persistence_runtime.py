@@ -4,6 +4,7 @@ import collections
 import threading
 import time
 
+from operational_log import log_event, log_exception
 from world_state import WorldStateError, serialize_world_state
 
 
@@ -96,10 +97,12 @@ class PersistenceWriter(object):
         receipt = SaveReceipt()
         key = username.lower()
         rejection = None
+        rejection_reason = None
 
         with self.condition:
             if not self.started or self.closing:
                 rejection = RuntimeError("writer is not accepting saves")
+                rejection_reason = "writer_unavailable"
             else:
                 pending_save = self.pending.get(key)
 
@@ -108,6 +111,7 @@ class PersistenceWriter(object):
                         rejection = RuntimeError(
                             "persistence queue is full"
                         )
+                        rejection_reason = "queue_full"
                     else:
                         pending_save = PendingSave(encoded_state)
                         self.pending[key] = pending_save
@@ -123,6 +127,12 @@ class PersistenceWriter(object):
 
         if rejection is not None:
             receipt.complete(False, rejection)
+            log_event(
+                "persistence.queue_rejected",
+                key=key,
+                writer=self.thread_name,
+                reason=rejection_reason
+            )
 
             if completion is not None:
                 try:
@@ -153,6 +163,22 @@ class PersistenceWriter(object):
                 error = caught_error
 
             success = error is None
+
+            if success:
+                log_event(
+                    "persistence.write",
+                    key=username,
+                    writer=self.thread_name,
+                    result="success"
+                )
+            else:
+                log_exception(
+                    "persistence.write",
+                    error,
+                    key=username,
+                    writer=self.thread_name,
+                    result="failed"
+                )
 
             with self.condition:
                 if success:
