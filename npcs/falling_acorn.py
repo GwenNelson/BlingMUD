@@ -58,10 +58,13 @@ class FallingAcornBehavior(NPCBehavior):
             return None
 
         target = self.random_source.choice(players)
-        return NPCAction.emote(
-            "drops a giant acorn squarely onto {0}'s head. Bonk.".format(
-                target.name
-            )
+        return (
+            NPCAction.emote(
+                "drops a giant acorn squarely onto {0}'s head. Bonk.".format(
+                    target.name
+                )
+            ),
+            NPCAction.damage(target, 1, "a falling giant acorn")
         )
 
 

@@ -21,6 +21,16 @@ class RecordingSession(object):
     def send(self, message):
         self.messages.append(message)
 
+    def damage_player(self, amount, cause):
+        damage = self.player.take_damage(amount)
+
+        if self.player.health == 0:
+            self.player.health = 1
+            self.player.intoxication = 0
+            self.player.recently_respawned = True
+
+        return damage
+
 
 class ValsHellaHollerTests(unittest.TestCase):
     def setUp(self):
@@ -197,7 +207,7 @@ class ValsHellaHollerTests(unittest.TestCase):
             )
             self.assertIn(expected, self.transcript())
 
-    def test_attacking_val_triggers_cats_without_killing_the_player(self):
+    def test_attacking_val_triggers_cats_and_shared_collapse_rule(self):
         self.player.health = 3
 
         self.assertTrue(
@@ -205,14 +215,21 @@ class ValsHellaHollerTests(unittest.TestCase):
         )
 
         self.assertEqual(self.player.health, 1)
+        self.assertTrue(self.player.recently_respawned)
         self.assertIn("Every tavern cat", self.transcript())
-        self.assertIn("for 2 health", self.transcript())
+        self.assertIn("for 3 health", self.transcript())
 
         self.session.messages = []
         self.player.health = 0
         self.room.on_command(self.session, "hit", "val")
-        self.assertEqual(self.player.health, 0)
+        self.assertEqual(self.player.health, 1)
         self.assertIn("for 0 health", self.transcript())
+
+    def test_val_recognizes_and_consumes_recent_collapse_status(self):
+        self.player.recently_respawned = True
+        self.room.val.on_player_enter(self.player)
+        self.assertIn("freshly-collapsed", self.transcript())
+        self.assertFalse(self.player.recently_respawned)
 
     def test_unknown_room_command_remains_unhandled(self):
         self.assertFalse(

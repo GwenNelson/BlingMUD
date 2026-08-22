@@ -248,10 +248,6 @@ class ValsHellaHoller(Room):
             return True
 
         player = session.player
-        old_health = player.health
-
-        if old_health > 1:
-            player.health = max(1, old_health - 5)
         self.val.perform_action(
             NPCAction.emote(
                 "whistles once. Every tavern cat lands on the attacker at "
@@ -264,9 +260,10 @@ class ValsHellaHoller(Room):
                 "rule personally."
             )
         )
+        damage = session.damage_player(5, "Val's extremely organized cats")
         session.send(
             "The cats enforce house policy for {0} health.".format(
-                old_health - player.health
+                damage
             )
         )
         return True

@@ -38,6 +38,9 @@ class RecordingSession(object):
     def send(self, message):
         self.messages.append(message)
 
+    def damage_player(self, amount, cause):
+        return self.player.take_damage(amount)
+
 
 class VillageGreenContentTests(unittest.TestCase):
     def setUp(self):
@@ -196,11 +199,13 @@ class VillageGreenContentTests(unittest.TestCase):
         )
 
     def test_low_harvest_hazard_bonks_only_until_green_is_safe(self):
+        starting_health = self.player.health
         self.clock.now = 105.0
         self.green.acorn_hazard.tick()
         self.assertTrue(
             any("Bonk" in message for message in self.session.messages)
         )
+        self.assertEqual(self.player.health, starting_health - 1)
 
         self.state.harvest_acorn()
         self.state.harvest_acorn()

@@ -107,7 +107,11 @@ Village content
 ☒ Add initial local-FSM Val behavior with jokes, drink service, teleport-style attention, injury/intoxication awareness, Wisp-harm awareness, and cat defense.
 ☒ Add three bounded, persistent horn drink templates with explicit healing/intoxication effects and an always-available healing-potion path.
 ☐ Extend the horn from its fixed healing/mead/impossible-special mapping to bounded custom drink names, descriptions, provenance, and optional effects without accepting executable or unbounded generated state.
-☐ Add food, currency/prices, tavern regular memory, intoxication decay/status effects, and richer bloodied/exhausted observations.
+☐ Add food, currency/prices, tavern regular memory, and richer bloodied/exhausted observations.
+☒ Centralize bounded damage/healing/intoxication changes; make falling acorns deal one damage and Val's cats deal five through the shared API.
+☒ Add non-destructive zero-health collapse to Town Square, retaining carried/equipped items and fabulousness while clearing intoxication, restoring one health, and letting Val recognize a recent collapse.
+☒ Decay online intoxication by one point per whole minute without blocking selector I/O or allowing backwards clocks to increase it.
+☐ Persist recent-collapse state and a bounded wall-clock status timestamp in character schema version 2 so intoxication can also decay safely while offline.
 ☒ Add the initial Village Green and Hanging Tree canopy with `/up`/`/down`, day/night Wisp descriptions, both acorn harvest verbs, bounded giant-acorn supply, and a room-aware low-harvest bonking hazard.
 ☐ Make canopy supply renewable and persist shared village ecology across restarts without enabling unbounded item creation.
 ☐ Add Master Corbel, Acorn Goblets, and Acorn Mash.

@@ -25,6 +25,7 @@ from persistence_runtime import (
     GRACEFUL_FLUSH_SECONDS,
     PersistenceWriter
 )
+from status_runtime import STATUS_INTERVAL_SECONDS, StatusCoordinator
 from telnet_parser import (
     BackspaceInputEvent,
     DONT,
@@ -65,6 +66,7 @@ SESSIONS_LOCK = threading.RLock()
 ADMIN_PASSWORD_HASH = None
 PERSISTENCE_WRITER = None
 AUTOSAVE_COORDINATOR = None
+STATUS_COORDINATOR = None
 
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 600000
@@ -457,7 +459,14 @@ class Session(object):
     Network reads and writes may be owned by the selector runtime.
     """
 
-    def __init__(self, request, address, world, persistence_writer=None):
+    def __init__(
+        self,
+        request,
+        address,
+        world,
+        persistence_writer=None,
+        monotonic_source=None
+    ):
         self.request = request
         self.address = address
         self.world = world
@@ -483,6 +492,48 @@ class Session(object):
         self.last_save_receipt = None
         self.last_save_error = None
         self.input_parser = TelnetInputParser(MAX_INPUT_LENGTH)
+        self.monotonic_source = monotonic_source or time.monotonic
+        self.last_status_update = self.monotonic_source()
+
+    def reset_status_clock(self):
+        self.last_status_update = self.monotonic_source()
+
+    def decay_online_status(self, now=None, wait=False):
+        """Decay intoxication by one point per whole online minute."""
+        if now is None:
+            now = self.monotonic_source()
+
+        acquired = self.state_lock.acquire(blocking=bool(wait))
+
+        if not acquired:
+            return "busy"
+
+        try:
+            if now < self.last_status_update:
+                return 0
+
+            whole_minutes = int(
+                (now - self.last_status_update) // STATUS_INTERVAL_SECONDS
+            )
+
+            if whole_minutes <= 0:
+                return 0
+
+            self.last_status_update += (
+                whole_minutes * STATUS_INTERVAL_SECONDS
+            )
+
+            if self.player is None:
+                return 0
+
+            old_intoxication = self.player.intoxication
+            self.player.intoxication = max(
+                0,
+                old_intoxication - whole_minutes
+            )
+            return old_intoxication - self.player.intoxication
+        finally:
+            self.state_lock.release()
 
     def set_persisted_state(self, encoded_state):
         with self.save_lock:
@@ -966,6 +1017,7 @@ class Session(object):
                 if not already_connected:
                     self.player = player
                     self.login_room = login_room
+                    self.reset_status_clock()
                     SESSIONS[key] = self
 
             if already_connected:
@@ -1058,6 +1110,7 @@ class Session(object):
                 self.player = Player(name)
                 self.player.session = self
                 self.login_room = self.world.starting_room
+                self.reset_status_clock()
                 SESSIONS[key] = self
 
             self.set_persisted_state(new_player_state_json())
@@ -1082,6 +1135,64 @@ class Session(object):
         destination.describe_to(player)
         self.send("")
         destination.enter(player)
+
+    def damage_player(self, amount, cause="an unfortunate event"):
+        """Apply damage and perform the shared non-destructive collapse flow."""
+        cause = NPCAction.emote(cause).text
+
+        with self.state_lock:
+            player = self.player
+
+            if player is None:
+                return 0
+
+            damage = player.take_damage(amount)
+
+            if player.health == 0:
+                self._collapse_player(cause)
+
+            return damage
+
+    def _collapse_player(self, cause):
+        player = self.player
+
+        if player is None:
+            return False
+
+        old_room = player.room
+        destination = self.world.starting_room
+
+        if old_room is not None:
+            old_room.broadcast(
+                "* {0} collapses because of {1}.".format(player.name, cause)
+            )
+
+            if old_room is not destination:
+                old_room.leave(player, announce=False)
+
+        player.health = 1
+        player.intoxication = 0
+        player.recently_respawned = True
+
+        self.send(
+            "You collapse. The world goes sparkly around the edges, then "
+            "kindly deposits you in Town Square."
+        )
+
+        if player.room is not destination:
+            destination.enter(player, announce=False)
+
+        destination.describe_to(player)
+
+        if old_room is not destination:
+            destination.broadcast(
+                "* {0} reappears looking recently collapsed.".format(
+                    player.name
+                ),
+                exclude=self
+            )
+
+        return True
 
     def handle_chat(self, line):
         self.player.room.broadcast(
@@ -1795,6 +1906,7 @@ class PreAuthController(object):
 
             self.session.player = player
             self.session.login_room = login_room
+            self.session.reset_status_clock()
             player.session = self.session
             SESSIONS[key] = self.session
 
@@ -1834,6 +1946,7 @@ def main():
     global NPC_MANAGER
     global PERSISTENCE_WRITER
     global AUTOSAVE_COORDINATOR
+    global STATUS_COORDINATOR
 
     try:
         host, port = configured_server_address()
@@ -1846,6 +1959,7 @@ def main():
     PERSISTENCE_WRITER = PersistenceWriter(persist_user_state)
     PERSISTENCE_WRITER.start()
     AUTOSAVE_COORDINATOR = AutosaveCoordinator(active_sessions_snapshot)
+    STATUS_COORDINATOR = StatusCoordinator(active_sessions_snapshot)
 
     if os.path.exists("admin.hash"):
         with open("admin.hash", "r") as f:
@@ -1870,6 +1984,7 @@ def main():
         (host, port),
         begin_selector_connection
     )
+    server.add_maintenance_callback(STATUS_COORDINATOR.tick)
     server.add_maintenance_callback(AUTOSAVE_COORDINATOR.tick)
 
     try:
@@ -1879,6 +1994,7 @@ def main():
         PERSISTENCE_WRITER.shutdown(GRACEFUL_FLUSH_SECONDS)
         PERSISTENCE_WRITER = None
         AUTOSAVE_COORDINATOR = None
+        STATUS_COORDINATOR = None
         sys.stderr.write("Could not bind BlingMUD listener: {0}\n".format(error))
         return 1
 
@@ -1939,6 +2055,7 @@ def main():
 
         PERSISTENCE_WRITER = None
         AUTOSAVE_COORDINATOR = None
+        STATUS_COORDINATOR = None
 
     return 0
 

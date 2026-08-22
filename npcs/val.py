@@ -32,7 +32,15 @@ def _arrival_actions(behavior, context):
             )
         ))
 
-    if player.health * 2 <= player.max_health:
+    if player.recently_respawned:
+        player.recently_respawned = False
+        actions.append(
+            NPCAction.say(
+                "You have that freshly-collapsed look. The cats deny all "
+                "involvement, which is how I know they noticed too."
+            )
+        )
+    elif player.is_injured:
         actions.append(
             NPCAction.say(
                 "You look half-dead. Order a healing potion; that one is "

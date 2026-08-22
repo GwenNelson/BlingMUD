@@ -12,21 +12,13 @@ class Drink(Item):
         ):
             return None
 
-        old_health = player.health
-        old_intoxication = player.intoxication
-        player.health = min(
-            player.max_health,
-            player.health + self.healing
-        )
-        player.intoxication = min(
-            MAX_INTOXICATION,
-            player.intoxication + self.intoxication_gain
+        healed = player.heal(self.healing)
+        intoxication_gained = player.add_intoxication(
+            self.intoxication_gain
         )
         return {
-            "healed": player.health - old_health,
-            "intoxication_gained": (
-                player.intoxication - old_intoxication
-            )
+            "healed": healed,
+            "intoxication_gained": intoxication_gained
         }
 
     def consumption_message(self, result):

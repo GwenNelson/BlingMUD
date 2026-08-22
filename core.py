@@ -336,6 +336,43 @@ class Player(Entity):
         self.max_health = DEFAULT_MAX_HEALTH
         self.health = self.max_health
         self.intoxication = 0
+        self.recently_respawned = False
+
+    @staticmethod
+    def _bounded_change(value, label):
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise TypeError("{0} must be an integer".format(label))
+
+        if value < 0:
+            raise ValueError("{0} cannot be negative".format(label))
+
+        return value
+
+    @property
+    def is_injured(self):
+        """Return whether ordinary NPCs should notice an injury."""
+        return self.health * 2 <= self.max_health
+
+    def take_damage(self, amount):
+        """Apply a bounded amount of damage and return health actually lost."""
+        amount = self._bounded_change(amount, "damage")
+        old_health = self.health
+        self.health = max(0, self.health - amount)
+        return old_health - self.health
+
+    def heal(self, amount):
+        """Apply bounded healing and return health actually restored."""
+        amount = self._bounded_change(amount, "healing")
+        old_health = self.health
+        self.health = min(self.max_health, self.health + amount)
+        return self.health - old_health
+
+    def add_intoxication(self, amount):
+        """Apply a bounded intoxication increase and return the real change."""
+        amount = self._bounded_change(amount, "intoxication")
+        old_intoxication = self.intoxication
+        self.intoxication = min(MAX_INTOXICATION, old_intoxication + amount)
+        return self.intoxication - old_intoxication
 
     def inventory_is_full(self):
         return len(self.inventory) >= PLAYER_INVENTORY_LIMIT
@@ -610,11 +647,14 @@ class NPCAction(object):
 
     TYPE_SAY = "say"
     TYPE_EMOTE = "emote"
-    VALID_TYPES = (TYPE_SAY, TYPE_EMOTE)
+    TYPE_DAMAGE = "damage"
+    VALID_TYPES = (TYPE_SAY, TYPE_EMOTE, TYPE_DAMAGE)
 
-    def __init__(self, action_type, text):
+    def __init__(self, action_type, text, target=None, amount=None):
         self.action_type = action_type
         self.text = text
+        self.target = target
+        self.amount = amount
         self.validate()
 
     def validate(self):
@@ -637,6 +677,14 @@ class NPCAction(object):
             if unicodedata.category(character) in ("Cc", "Cf", "Cs"):
                 raise ValueError("NPC action text contains control characters")
 
+        if action_type == self.TYPE_DAMAGE:
+            if not isinstance(self.target, Player):
+                raise TypeError("NPC damage target must be a Player")
+
+            Player._bounded_change(self.amount, "NPC damage")
+        elif self.target is not None or self.amount is not None:
+            raise ValueError("speech and emotes cannot carry damage fields")
+
     @classmethod
     def say(cls, text):
         return cls(cls.TYPE_SAY, text)
@@ -644,6 +692,10 @@ class NPCAction(object):
     @classmethod
     def emote(cls, text):
         return cls(cls.TYPE_EMOTE, text)
+
+    @classmethod
+    def damage(cls, target, amount, cause):
+        return cls(cls.TYPE_DAMAGE, cause, target=target, amount=amount)
 
 
 class NPCBehavior(object):
@@ -1394,6 +1446,14 @@ class NPC(Entity):
 
         if action.action_type == NPCAction.TYPE_EMOTE:
             self.emote(action.text)
+            return
+
+        if action.action_type == NPCAction.TYPE_DAMAGE:
+            session = action.target.session
+
+            if session is not None:
+                session.damage_player(action.amount, action.text)
+
             return
 
         raise ValueError("unsupported NPC action type")
