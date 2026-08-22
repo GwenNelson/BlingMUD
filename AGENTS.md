@@ -37,6 +37,8 @@ Project-specific guidance:
 
 - Preserve the distinction between real implemented behavior and planned content.
 - Treat Brave Sir Knight as the baseline example for NPC behavior design.
+- Route new NPC decision logic through `NPCBehavior`; do not add new direct NPC hook overrides that bypass the shared behavior contract.
+- Player speech and emotes reach NPCs through the room notification methods; preserve that delivery path when changing chat or command handling.
 - Keep the codebase compatible with the current threaded telnet architecture unless the roadmap says otherwise.
 - If a change affects persistence, NPC brains, room triggers, or AI fallback, be careful to preserve save/load and failure-mode behavior.
 - Password hashes use salted PBKDF2-SHA256; preserve verification and successful-login migration for legacy SHA-256 records until a deliberate migration removes that compatibility path.

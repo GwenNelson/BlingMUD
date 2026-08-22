@@ -1,5 +1,7 @@
 import threading
 import time
+import traceback
+import sys
 
 TICK_DELAY = 3.0
 
@@ -110,9 +112,7 @@ class Room(object):
                 self.players.append(player)
 
         player.room = self
-
-        for npc in self.npcs:
-            npc.on_player_enter(player)
+        self._notify_npcs("on_player_enter", player)
 
         if announce:
             self.broadcast(
@@ -125,8 +125,7 @@ class Room(object):
             if player in self.players:
                 self.players.remove(player)
 
-        for npc in self.npcs:
-            npc.on_player_leave(player)
+        self._notify_npcs("on_player_leave", player)
 
         if announce:
             self.broadcast(
@@ -142,6 +141,30 @@ class Room(object):
             session = player.session
             if session is not None and session is not exclude:
                 session.send(message)
+
+    def notify_player_said(self, player, text):
+        self._notify_npcs("on_say", player, text)
+
+    def notify_player_emoted(self, player, action):
+        self._notify_npcs("on_emote", player, action)
+
+    def _notify_npcs(self, method_name, *arguments):
+        with self.lock:
+            recipients = list(self.npcs)
+
+        for npc in recipients:
+            callback = getattr(npc, method_name)
+
+            try:
+                callback(*arguments)
+            except Exception:
+                sys.stderr.write(
+                    "NPC event {0} failed for {1}.\n".format(
+                        method_name,
+                        npc.name
+                    )
+                )
+                traceback.print_exc()
 
     def describe_to(self, player):
         player.session.send("")
@@ -293,6 +316,45 @@ def register_command(command_class):
     return command_class
 
 
+class NPCBehavior(object):
+    """Base contract for a non-player character's decision logic."""
+
+    MODE_NONE = "none"
+    MODE_SIMPLE_RANDOM = "simple_random"
+    MODE_FSM = "fsm"
+    MODE_LLM_FSM = "llm_fsm"
+
+    mode = MODE_NONE
+
+    def __init__(self):
+        self.npc = None
+
+    def bind(self, npc):
+        if self.npc is not None and self.npc is not npc:
+            raise ValueError("NPC behavior is already bound")
+
+        self.npc = npc
+
+    def unbind(self, npc):
+        if self.npc is npc:
+            self.npc = None
+
+    def on_player_enter(self, player):
+        pass
+
+    def on_player_leave(self, player):
+        pass
+
+    def on_say(self, player, text):
+        pass
+
+    def on_emote(self, player, action):
+        pass
+
+    def tick(self):
+        pass
+
+
 
 
 class NPCManager(object):
@@ -326,7 +388,13 @@ class NPCManager(object):
             active_npcs = list(self.npcs)
 
        for npc in active_npcs:
-            npc.tick()
+            try:
+                npc.tick()
+            except Exception:
+                sys.stderr.write(
+                    "NPC tick failed for {0}.\n".format(npc.name)
+                )
+                traceback.print_exc()
 
    def _run_ticker_thread(self):
        while self.running:
@@ -345,13 +413,37 @@ class NPCManager(object):
 class NPC(Entity):
     """A living non-player character."""
 
-    def __init__(self, name, description=""):
+    def __init__(self, name, description="", behavior=None):
         Entity.__init__(self, name, description)
 
         self.room = None
         self.flags = set()
         self.keywords = []
         self.inventory = []
+        self.behavior = None
+
+        if behavior is None:
+            behavior = NPCBehavior()
+
+        self.set_behavior(behavior)
+
+    @property
+    def behavior_mode(self):
+        return self.behavior.mode
+
+    def set_behavior(self, behavior):
+        if not isinstance(behavior, NPCBehavior):
+            raise TypeError("behavior must be an NPCBehavior")
+
+        if self.behavior is behavior:
+            return
+
+        behavior.bind(self)
+        previous_behavior = self.behavior
+        self.behavior = behavior
+
+        if previous_behavior is not None:
+            previous_behavior.unbind(self)
 
     def enter(self, room):
         if self.room is not None:
@@ -362,21 +454,21 @@ class NPC(Entity):
 
     def on_player_enter(self, player):
         """Called when a player enters the room."""
-        pass
+        return self.behavior.on_player_enter(player)
 
     def on_player_leave(self, player):
-        pass
+        return self.behavior.on_player_leave(player)
 
     def on_say(self, player, text):
         """Player spoke aloud."""
-        pass
+        return self.behavior.on_say(player, text)
 
     def on_emote(self, player, action):
-        pass
+        return self.behavior.on_emote(player, action)
 
     def tick(self):
         """Periodic update."""
-        pass
+        return self.behavior.tick()
 
     def speak(self, text):
         if self.room:

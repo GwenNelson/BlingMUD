@@ -129,6 +129,10 @@ class EmoteCommand(Command):
         session.player.room.broadcast(
             "* {0} {1}".format(colour(session.player.name,Colour.BRIGHT_CYAN), arguments)
         )
+        session.player.room.notify_player_emoted(
+            session.player,
+            arguments
+        )
 
 @register_command
 class InventoryCommand(Command):
@@ -272,5 +276,4 @@ class QuitCommand(Command):
     def execute(self, session, arguments):
         session.send("Goodbye!")
         session.running = False
-
 

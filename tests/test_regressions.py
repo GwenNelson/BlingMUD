@@ -1,11 +1,14 @@
 import unittest
 import hashlib
+import io
 import os
 import stat
+import sys
 import tempfile
 
 import blingmud
-from core import Item, NPC, NPCManager, Room
+from core import Item, NPC, NPCBehavior, NPCManager, Player, Room
+from npcs.brave_sir_knight import BraveSirKnight
 
 
 class DummyRequest(object):
@@ -147,6 +150,159 @@ class NPCManagerRegressionTests(unittest.TestCase):
         self.assertNotIn(npc, room.npcs)
         self.assertNotIn(npc, manager.npcs)
         self.assertIsNone(npc.room)
+
+
+class RecordingBehavior(NPCBehavior):
+    mode = NPCBehavior.MODE_FSM
+
+    def __init__(self):
+        NPCBehavior.__init__(self)
+        self.events = []
+
+    def on_player_enter(self, player):
+        self.events.append(("enter", player))
+
+    def on_player_leave(self, player):
+        self.events.append(("leave", player))
+
+    def on_say(self, player, text):
+        self.events.append(("say", player, text))
+
+    def on_emote(self, player, action):
+        self.events.append(("emote", player, action))
+
+    def tick(self):
+        self.events.append(("tick",))
+
+
+class FailingBehavior(NPCBehavior):
+    def on_say(self, player, text):
+        raise RuntimeError("broken speech handler")
+
+    def tick(self):
+        raise RuntimeError("broken tick handler")
+
+
+class NPCBehaviorTests(unittest.TestCase):
+    def test_npc_delegates_every_event_to_its_behavior(self):
+        behavior = RecordingBehavior()
+        npc = NPC("Listener", behavior=behavior)
+        player = Player("Traveller")
+
+        npc.on_player_enter(player)
+        npc.on_player_leave(player)
+        npc.on_say(player, "Hello")
+        npc.on_emote(player, "waves")
+        npc.tick()
+
+        self.assertIs(behavior.npc, npc)
+        self.assertEqual(npc.behavior_mode, NPCBehavior.MODE_FSM)
+        self.assertEqual(
+            behavior.events,
+            [
+                ("enter", player),
+                ("leave", player),
+                ("say", player, "Hello"),
+                ("emote", player, "waves"),
+                ("tick",)
+            ]
+        )
+
+    def test_failed_behavior_replacement_preserves_current_behavior(self):
+        current_behavior = RecordingBehavior()
+        occupied_behavior = RecordingBehavior()
+        npc = NPC("Listener", behavior=current_behavior)
+        other_npc = NPC("Other", behavior=occupied_behavior)
+
+        with self.assertRaises(ValueError):
+            npc.set_behavior(occupied_behavior)
+
+        self.assertIs(npc.behavior, current_behavior)
+        self.assertIs(current_behavior.npc, npc)
+        self.assertIs(occupied_behavior.npc, other_npc)
+
+    def test_room_routes_speech_and_emotes_to_npc_behavior(self):
+        behavior = RecordingBehavior()
+        npc = NPC("Listener", behavior=behavior)
+        room = Room("event_test", "Event Test", "A test room.")
+        request = DummyRequest()
+        session = blingmud.Session(
+            request,
+            ("127.0.0.1", 0),
+            blingmud.WORLD
+        )
+        player = Player("Speaker")
+        player.session = session
+        session.player = player
+
+        room.add_npc(npc)
+
+        try:
+            room.enter(player, announce=False)
+            session.handle_chat("Good evening")
+            blingmud.COMMANDS["me"].execute(session, "waves")
+            room.leave(player, announce=False)
+
+            self.assertEqual(
+                behavior.events,
+                [
+                    ("enter", player),
+                    ("say", player, "Good evening"),
+                    ("emote", player, "waves"),
+                    ("leave", player)
+                ]
+            )
+        finally:
+            room.remove_npc(npc)
+
+    def test_brave_sir_knight_uses_fsm_behavior_contract(self):
+        knight = BraveSirKnight()
+        player = Player("Traveller")
+
+        knight.on_player_enter(player)
+
+        self.assertEqual(knight.behavior_mode, NPCBehavior.MODE_FSM)
+        self.assertIs(knight.behavior.npc, knight)
+        self.assertEqual(knight.known_travellers["traveller"]["visits"], 1)
+
+    def test_broken_behavior_does_not_block_other_npc_events(self):
+        room = Room("failure_test", "Failure Test", "A test room.")
+        failing_npc = NPC("Broken", behavior=FailingBehavior())
+        recording_behavior = RecordingBehavior()
+        working_npc = NPC("Working", behavior=recording_behavior)
+        player = Player("Speaker")
+        original_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+
+        room.add_npc(failing_npc)
+        room.add_npc(working_npc)
+
+        try:
+            room.notify_player_said(player, "Hello")
+        finally:
+            room.remove_npc(failing_npc)
+            room.remove_npc(working_npc)
+            sys.stderr = original_stderr
+
+        self.assertEqual(
+            recording_behavior.events,
+            [("say", player, "Hello")]
+        )
+
+    def test_broken_behavior_does_not_stop_manager_tick(self):
+        manager = NPCManager()
+        recording_behavior = RecordingBehavior()
+        manager.register(NPC("Broken", behavior=FailingBehavior()))
+        manager.register(NPC("Working", behavior=recording_behavior))
+        original_stderr = sys.stderr
+        sys.stderr = io.StringIO()
+
+        try:
+            manager.tick()
+        finally:
+            sys.stderr = original_stderr
+
+        self.assertEqual(recording_behavior.events, [("tick",)])
 
 
 if __name__ == "__main__":

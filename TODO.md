@@ -33,11 +33,15 @@ Core engine
 
 NPCs
 
-☐ Abstract the NPC behavior model so a single NPC can be:
+☒ Add a shared NPC behavior contract for enter, leave, speech, emote, and tick events.
+☒ Deliver player speech and `/me` events to NPC behaviors.
+☒ Isolate NPC callback failures so one broken behavior does not stop room event delivery or the global ticker.
+☒ Route Brave Sir Knight's existing FSM through the shared behavior contract without changing his intended behavior.
+☐ Add reusable behavior implementations so a single NPC can be:
   ☐ simple random chatter
   ☐ deterministic FSM
   ☐ FSM with optional LLM assistance
-☐ Migrate Brave Sir Knight onto the shared behavior model.
+☐ Re-express Brave Sir Knight's procedural state machine using the reusable FSM implementation once it exists.
 ☐ Make NPC memory structured and optional.
 ☐ Add fallback from LLM to FSM when the provider is unavailable.
 ☐ Add OpenRouter support behind a local adapter, with validation and a circuit breaker.

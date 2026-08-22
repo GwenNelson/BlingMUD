@@ -785,6 +785,7 @@ class Session(object):
         self.player.room.broadcast(
             "<{0}> {1}".format(colour(self.player.name,Colour.BRIGHT_CYAN), line)
         )
+        self.player.room.notify_player_said(self.player, line)
 
     def handle_command(self, line):
         command_line = line[1:].strip()

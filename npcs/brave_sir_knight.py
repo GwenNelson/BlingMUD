@@ -1,7 +1,23 @@
-from core import NPC
+from core import NPC, NPCBehavior
 import random
 import time
 import threading
+
+
+class BraveSirKnightBehavior(NPCBehavior):
+    """Compatibility behavior for the knight's hand-authored FSM."""
+
+    mode = NPCBehavior.MODE_FSM
+
+    def tick(self):
+        return self.npc._behavior_tick()
+
+    def on_player_enter(self, player):
+        return self.npc._behavior_on_player_enter(player)
+
+    def on_player_leave(self, player):
+        return self.npc._behavior_on_player_leave(player)
+
 
 class BraveSirKnight(NPC):
 
@@ -22,7 +38,8 @@ class BraveSirKnight(NPC):
         NPC.__init__(
             self,
             "Brave Sir Knight",
-            "A weary but honourable knight keeps watch over the crossroads."
+            "A weary but honourable knight keeps watch over the crossroads.",
+            behavior=BraveSirKnightBehavior()
         )
 
         self._state_lock = threading.RLock()
@@ -314,7 +331,7 @@ class BraveSirKnight(NPC):
     # Main dispatcher
     # ------------------------------------------------------------------
 
-    def tick(self):
+    def _behavior_tick(self):
         if not self.room:
             return
 
@@ -931,7 +948,7 @@ class BraveSirKnight(NPC):
     # Player events
     # ------------------------------------------------------------------
 
-    def on_player_enter(self, player):
+    def _behavior_on_player_enter(self, player):
         key = player.name.lower()
         now = time.time()
 
@@ -979,7 +996,7 @@ class BraveSirKnight(NPC):
             if self.next_action_time > soon:
                 self.next_action_time = soon
 
-    def on_player_leave(self, player):
+    def _behavior_on_player_leave(self, player):
         key = player.name.lower()
         now = time.time()
 
