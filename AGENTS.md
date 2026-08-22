@@ -9,7 +9,7 @@ Follow these rules when working here:
 - Always fix known bugs first unless explicitly told not to.
 - Always review for potential bugs, including security issues, before starting new feature work.
 - Do not patch blindly from assumptions.
-- After any implementation or bugfix commit, update `AI_ROADMAP.md` and `TODO.md` before moving on.
+- After any implementation or bugfix commit, update `AGENTS.md`, `AI_ROADMAP.md`, and `TODO.md` before moving on.
 - Do not leave the roadmap or TODO stale; future agents rely on them to know what is actually done.
 - Prefer small, reviewable changes over large rewrites.
 - Keep content work, engine work, and AI architecture work separate where possible.
@@ -53,9 +53,12 @@ Project-specific guidance:
 - Village content shares bounded runtime state through `VillageState`; preserve the single state object across the Green, canopy, and later village rooms so acorn danger and Wisp harm have real cross-location consequences. Do not pretend this runtime world state is durable until an explicit world-state persistence layer exists.
 - Keep ambient hazard actors hidden from ordinary room occupant lists, room-aware through `NPCManager`, locally deterministic in tests, and mechanically bounded. Giant-acorn creation is capped by finite canopy supply and one-at-a-time carrying, and every new persistent content item must be added explicitly to the player-state template whitelist.
 - The Wisp Mother is deliberately non-verbal. Preserve examine/protect/harm behavior through light and emote actions, and keep the shared `wisp_harmed_count` available for Val and later villagers to react to without introducing remote AI.
+- Val's initial implementation is deliberately local-only: `ValBehavior` is a complete `FSMBehavior`, consumes shared Wisp-harm state on the next tavern arrival, and must remain functional without configuration, network access, or an LLM. Her horn currently maps bounded player concepts to three fixed, persistent drink templates; do not describe that first slice as arbitrary generated-item persistence.
+- Keep player inventories and room item collections within their shared hard limits on every acquisition, reward, take, drop, and item-creation path. A full inventory must not consume a one-time reward or shared finite resource, and a full room must not remove or unequip the item a player tried to drop.
 - Keep the codebase compatible with the current threaded telnet architecture unless the roadmap says otherwise.
 - If a change affects persistence, NPC brains, room triggers, or AI fallback, be careful to preserve save/load and failure-mode behavior.
-- Player saves are versioned JSON handled by `player_state.py`: keep payloads and collections bounded, instantiate items only through the explicit template whitelist (currently pimp hat, royal possum bottle cap, and giant acorn), reject lossy saves, and fall back safely when stored state is malformed. Never replace this with pickle, dynamic imports, or arbitrary class names from save data.
+- Player saves are versioned JSON handled by `player_state.py`: keep payloads and collections bounded, instantiate items only through the explicit template whitelist (currently pimp hat, royal possum bottle cap, giant acorn, Val's healing potion, Valkyrie mead, and horn-born special), reject lossy saves, and fall back safely when stored state is malformed. Never replace this with pickle, dynamic imports, or arbitrary class names from save data.
+- Health, maximum health, and intoxication are clamped gameplay values in the version-1 character state. Older version-1 documents without those fields must retain safe defaults; admin privilege remains outside the save. Intoxication decay and broader status effects are still planned, not implemented.
 - Administrative privilege is authenticated per session and must not be restored from character JSON. Persisted equipment must refer to an item in the persisted inventory, and room locations must resolve through the current world's room IDs or fall back to the starting room.
 - Save character state before removing a disconnecting player from their room so the last valid room ID is retained. Save failures must preserve the prior database snapshot and must not prevent session/room cleanup.
 - OpenRouter and every other LLM provider are optional enhancements: missing or invalid provider configuration must disable remote calls cleanly, never prevent startup, and never stop the MUD or its NPCs from working locally.

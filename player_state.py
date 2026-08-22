@@ -1,13 +1,20 @@
 import json
 
+from core import (
+    DEFAULT_MAX_HEALTH,
+    MAX_HEALTH,
+    MAX_INTOXICATION,
+    PLAYER_INVENTORY_LIMIT
+)
 from items.pimp_hat import PimpHat
 from items.possum_token import RoyalPossumBottleCap
 from items.giant_acorn import GiantAcorn
+from items.drinks import HornBornSpecial, ValHealingPotion, ValkyrieMead
 
 
 PLAYER_STATE_VERSION = 1
 MAX_PLAYER_STATE_BYTES = 65536
-MAX_INVENTORY_ITEMS = 100
+MAX_INVENTORY_ITEMS = PLAYER_INVENTORY_LIMIT
 MAX_EQUIPMENT_SLOTS = 32
 MIN_FABULOUSNESS = -10000
 MAX_FABULOUSNESS = 10000
@@ -15,13 +22,19 @@ MAX_FABULOUSNESS = 10000
 ITEM_FACTORIES = {
     "pimp_hat": PimpHat,
     "royal_possum_bottle_cap": RoyalPossumBottleCap,
-    "giant_acorn": GiantAcorn
+    "giant_acorn": GiantAcorn,
+    "val_healing_potion": ValHealingPotion,
+    "valkyrie_mead": ValkyrieMead,
+    "horn_born_special": HornBornSpecial
 }
 
 ITEM_TEMPLATE_IDS = {
     PimpHat: "pimp_hat",
     RoyalPossumBottleCap: "royal_possum_bottle_cap",
-    GiantAcorn: "giant_acorn"
+    GiantAcorn: "giant_acorn",
+    ValHealingPotion: "val_healing_potion",
+    ValkyrieMead: "valkyrie_mead",
+    HornBornSpecial: "horn_born_special"
 }
 
 
@@ -34,7 +47,10 @@ def _default_document():
         "version": PLAYER_STATE_VERSION,
         "room_id": None,
         "stats": {
-            "fabulousness": 0
+            "fabulousness": 0,
+            "max_health": DEFAULT_MAX_HEALTH,
+            "health": DEFAULT_MAX_HEALTH,
+            "intoxication": 0
         },
         "inventory": [],
         "equipment": {}
@@ -82,9 +98,39 @@ def _validated_fabulousness(value):
     return value
 
 
+def _validated_integer(name, value, minimum, maximum):
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise PlayerStateError("{0} must be an integer".format(name))
+
+    if value < minimum or value > maximum:
+        raise PlayerStateError(
+            "{0} is outside the supported range".format(name)
+        )
+
+    return value
+
+
 def serialize_player_state(player):
     inventory = []
     inventory_indexes = {}
+    max_health = _validated_integer(
+        "max health",
+        player.max_health,
+        1,
+        MAX_HEALTH
+    )
+    health = _validated_integer(
+        "health",
+        player.health,
+        0,
+        max_health
+    )
+    intoxication = _validated_integer(
+        "intoxication",
+        player.intoxication,
+        0,
+        MAX_INTOXICATION
+    )
 
     if len(player.inventory) > MAX_INVENTORY_ITEMS:
         raise PlayerStateError("inventory contains too many items")
@@ -127,7 +173,10 @@ def serialize_player_state(player):
         "version": PLAYER_STATE_VERSION,
         "room_id": room_id,
         "stats": {
-            "fabulousness": _validated_fabulousness(player.fabulousness)
+            "fabulousness": _validated_fabulousness(player.fabulousness),
+            "max_health": max_health,
+            "health": health,
+            "intoxication": intoxication
         },
         "inventory": inventory,
         "equipment": equipment
@@ -176,6 +225,24 @@ def restore_player_state(player, encoded_state, world):
         raise PlayerStateError("player stats must be an object")
 
     fabulousness = _validated_fabulousness(stats.get("fabulousness"))
+    max_health = _validated_integer(
+        "max health",
+        stats.get("max_health", DEFAULT_MAX_HEALTH),
+        1,
+        MAX_HEALTH
+    )
+    health = _validated_integer(
+        "health",
+        stats.get("health", max_health),
+        0,
+        max_health
+    )
+    intoxication = _validated_integer(
+        "intoxication",
+        stats.get("intoxication", 0),
+        0,
+        MAX_INTOXICATION
+    )
 
     if not isinstance(inventory_data, list):
         raise PlayerStateError("player inventory must be a list")
@@ -235,5 +302,8 @@ def restore_player_state(player, encoded_state, world):
     player.inventory = inventory
     player.equipment = equipment
     player.fabulousness = fabulousness
+    player.max_health = max_health
+    player.health = health
+    player.intoxication = intoxication
 
     return room

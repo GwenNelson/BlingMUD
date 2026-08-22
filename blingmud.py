@@ -351,6 +351,7 @@ from rooms.crossroads import Crossroads
 from rooms.suspicious_alley import SuspiciousAlley
 from rooms.hanging_tree import HangingTreeCanopy
 from rooms.village_green import VillageGreen
+from rooms.vals_hella_holler import ValsHellaHoller
 from village_state import VillageState
 
 from commands.core import *
@@ -1076,6 +1077,7 @@ class World(object):
 
         green = self.add_room(VillageGreen(self.village_state))
         canopy = self.add_room(HangingTreeCanopy(self.village_state))
+        tavern = self.add_room(ValsHellaHoller(self.village_state))
 
         square.add_exit("north", chamber)
         chamber.add_exit("south", square)
@@ -1091,6 +1093,9 @@ class World(object):
 
         green.add_exit("up", canopy)
         canopy.add_exit("down", green)
+
+        green.add_exit("north", tavern)
+        tavern.add_exit("south", green)
 
         self.starting_room = square
 

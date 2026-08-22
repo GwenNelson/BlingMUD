@@ -2,6 +2,7 @@
 """
 
 from core import *
+from items.drinks import Drink
 
 @register_command
 class HelpCommand(Command):
@@ -22,6 +23,7 @@ class HelpCommand(Command):
         session.send("/me <action>")
         session.send("/who")
         session.send("/inventory")
+        session.send("/drink <drink>")
         session.send("/take <object>")
         session.send("/drop <object>")
         session.send("/equip <object>")
@@ -172,6 +174,39 @@ class InventoryCommand(Command):
 
 
 @register_command
+class DrinkCommand(Command):
+    name = "drink"
+    aliases = ("quaff",)
+
+    def execute(self, session, arguments):
+        player = session.player
+        item = player.find_item(arguments)
+
+        if item is None:
+            session.send("You are not carrying that drink.")
+            return
+
+        if not isinstance(item, Drink):
+            session.send("That is not something you can drink.")
+            return
+
+        result = item.apply_to(player)
+
+        if result is None:
+            session.send(
+                "You are too intoxicated for another alcoholic drink."
+            )
+            return
+
+        player.inventory.remove(item)
+        session.send(item.consumption_message(result))
+        player.room.broadcast(
+            "* {0} drinks {1}.".format(player.name, item.name),
+            exclude=session
+        )
+
+
+@register_command
 class TakeCommand(Command):
     name = "take"
     aliases = ("get",)
@@ -182,6 +217,10 @@ class TakeCommand(Command):
 
         if not wanted:
             session.send("Take what?")
+            return
+
+        if player.inventory_is_full():
+            session.send("You cannot carry anything else.")
             return
 
         item = None
@@ -221,15 +260,23 @@ class DropCommand(Command):
             session.send("You are not carrying that.")
             return
 
-        for slot, equipped_item in list(player.equipment.items()):
-            if equipped_item is item:
-                item.on_unequip(player)
-                del player.equipment[slot]
-
-        player.inventory.remove(item)
-
         with player.room.lock:
-            player.room.items.append(item)
+            if len(player.room.items) >= ROOM_ITEM_LIMIT:
+                room_is_full = True
+            else:
+                room_is_full = False
+
+                for slot, equipped_item in list(player.equipment.items()):
+                    if equipped_item is item:
+                        item.on_unequip(player)
+                        del player.equipment[slot]
+
+                player.inventory.remove(item)
+                player.room.items.append(item)
+
+        if room_is_full:
+            session.send("There is no safe place to put anything else here.")
+            return
 
         session.send("You drop the {0}.".format(colour(item.name,Colour.BRIGHT_GREEN)))
 
@@ -279,6 +326,15 @@ class StatsCommand(Command):
         session.send("Name: {0}".format(colour(player.name,Colour.BRIGHT_CYAN)))
         session.send(
             "Fabulousness: +{0}%".format(player.fabulousness)
+        )
+        session.send(
+            "Health: {0}/{1}".format(player.health, player.max_health)
+        )
+        session.send(
+            "Intoxication: {0}/{1}".format(
+                player.intoxication,
+                MAX_INTOXICATION
+            )
         )
 
 

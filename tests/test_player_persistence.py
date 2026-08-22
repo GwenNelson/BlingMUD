@@ -6,7 +6,14 @@ import tempfile
 import unittest
 
 import blingmud
-from core import Item, Player, Room
+from core import (
+    DEFAULT_MAX_HEALTH,
+    Item,
+    PLAYER_INVENTORY_LIMIT,
+    Player,
+    Room
+)
+from items.drinks import HornBornSpecial, ValHealingPotion, ValkyrieMead
 from items.giant_acorn import GiantAcorn
 from items.pimp_hat import PimpHat
 from items.possum_token import RoyalPossumBottleCap
@@ -63,9 +70,15 @@ class PlayerStateUnitTests(unittest.TestCase):
         hat = PimpHat()
         token = RoyalPossumBottleCap()
         acorn = GiantAcorn()
-        player.inventory = [hat, token, acorn]
+        potion = ValHealingPotion()
+        mead = ValkyrieMead()
+        special = HornBornSpecial()
+        player.inventory = [hat, token, acorn, potion, mead, special]
         player.equipment[hat.worn_where] = hat
         player.fabulousness = 37
+        player.max_health = 140
+        player.health = 83
+        player.intoxication = 46
         player.is_admin = True
 
         encoded = serialize_player_state(player)
@@ -74,14 +87,20 @@ class PlayerStateUnitTests(unittest.TestCase):
 
         self.assertIs(room, self.world.other_room)
         self.assertEqual(restored.fabulousness, 37)
-        self.assertEqual(len(restored.inventory), 3)
+        self.assertEqual(len(restored.inventory), 6)
         self.assertIsInstance(restored.inventory[0], PimpHat)
         self.assertIsInstance(
             restored.inventory[1],
             RoyalPossumBottleCap
         )
         self.assertIsInstance(restored.inventory[2], GiantAcorn)
+        self.assertIsInstance(restored.inventory[3], ValHealingPotion)
+        self.assertIsInstance(restored.inventory[4], ValkyrieMead)
+        self.assertIsInstance(restored.inventory[5], HornBornSpecial)
         self.assertIs(restored.equipment["Head"], restored.inventory[0])
+        self.assertEqual(restored.max_health, 140)
+        self.assertEqual(restored.health, 83)
+        self.assertEqual(restored.intoxication, 46)
         self.assertFalse(restored.is_admin)
 
     def test_legacy_empty_state_migrates_to_safe_defaults(self):
@@ -93,6 +112,31 @@ class PlayerStateUnitTests(unittest.TestCase):
         self.assertEqual(player.inventory, [])
         self.assertEqual(player.equipment, {})
         self.assertEqual(player.fabulousness, 0)
+        self.assertEqual(player.max_health, DEFAULT_MAX_HEALTH)
+        self.assertEqual(player.health, DEFAULT_MAX_HEALTH)
+        self.assertEqual(player.intoxication, 0)
+
+    def test_older_version_one_stats_gain_safe_health_defaults(self):
+        document = {
+            "version": PLAYER_STATE_VERSION,
+            "room_id": "other",
+            "stats": {"fabulousness": 12},
+            "inventory": [],
+            "equipment": {}
+        }
+        player = Player("Compatible")
+
+        room = restore_player_state(
+            player,
+            json.dumps(document),
+            self.world
+        )
+
+        self.assertIs(room, self.world.other_room)
+        self.assertEqual(player.fabulousness, 12)
+        self.assertEqual(player.max_health, DEFAULT_MAX_HEALTH)
+        self.assertEqual(player.health, DEFAULT_MAX_HEALTH)
+        self.assertEqual(player.intoxication, 0)
 
     def test_missing_room_falls_back_to_starting_room(self):
         document = json.loads(new_player_state_json())
@@ -133,9 +177,44 @@ class PlayerStateUnitTests(unittest.TestCase):
             self.assertEqual(player.inventory, [marker])
             self.assertEqual(player.fabulousness, 9)
 
+    def test_invalid_health_state_is_rejected_atomically(self):
+        document = json.loads(new_player_state_json())
+        document["stats"]["max_health"] = 100
+        document["stats"]["health"] = 101
+        player = Player("Untouched")
+        marker = PimpHat()
+        player.inventory = [marker]
+        player.health = 17
+
+        with self.assertRaises(PlayerStateError):
+            restore_player_state(player, json.dumps(document), self.world)
+
+        self.assertEqual(player.inventory, [marker])
+        self.assertEqual(player.health, 17)
+
     def test_unsupported_live_item_prevents_lossy_save(self):
         player = Player("Collector")
         player.inventory.append(Item("unregistered prototype"))
+
+        with self.assertRaises(PlayerStateError):
+            serialize_player_state(player)
+
+    def test_gameplay_inventory_limit_is_exactly_serializable(self):
+        player = Player("Bounded")
+        player.inventory = [
+            PimpHat()
+            for unused in range(PLAYER_INVENTORY_LIMIT)
+        ]
+
+        encoded = serialize_player_state(player)
+        restored = Player("Bounded")
+        restore_player_state(restored, encoded, self.world)
+        self.assertEqual(
+            len(restored.inventory),
+            PLAYER_INVENTORY_LIMIT
+        )
+
+        player.inventory.append(PimpHat())
 
         with self.assertRaises(PlayerStateError):
             serialize_player_state(player)

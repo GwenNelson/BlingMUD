@@ -8,6 +8,11 @@ import unicodedata
 
 TICK_DELAY = 3.0
 NPC_ACTION_MAX_TEXT_LENGTH = 1000
+PLAYER_INVENTORY_LIMIT = 100
+ROOM_ITEM_LIMIT = 100
+DEFAULT_MAX_HEALTH = 100
+MAX_HEALTH = 10000
+MAX_INTOXICATION = 100
 
 class Colour:
     UNDERLINE = "\033[4m" # i know, not a colour - but it makes sense here
@@ -100,6 +105,17 @@ class Room(object):
 
     def add_exit(self, direction, destination):
         self.exits[direction.lower()] = destination
+
+    def add_item(self, item):
+        if not isinstance(item, Item):
+            raise TypeError("room item must be an Item")
+
+        with self.lock:
+            if len(self.items) >= ROOM_ITEM_LIMIT:
+                return False
+
+            self.items.append(item)
+            return True
 
     def add_npc(self, npc):
         with self.lock:
@@ -296,6 +312,12 @@ class Player(Entity):
         self.inventory = []
         self.equipment = {}
         self.fabulousness = 0
+        self.max_health = DEFAULT_MAX_HEALTH
+        self.health = self.max_health
+        self.intoxication = 0
+
+    def inventory_is_full(self):
+        return len(self.inventory) >= PLAYER_INVENTORY_LIMIT
 
     def find_item(self, name):
         wanted = name.strip().lower()

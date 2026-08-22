@@ -10,7 +10,7 @@ Priority rules for human patches:
 - Prefer small, reviewable changes.
 - Keep content and engine changes separate where possible.
 - If a feature touches NPC brains, persistence, or AI, check the roadmap first.
-- After any meaningful implementation, update `AI_ROADMAP.md` and this file so the two documents stay aligned.
+- After any meaningful implementation, update `AGENTS.md`, `AI_ROADMAP.md`, and this file so all three documents stay aligned.
 
 Known bugs / first fixes
 
@@ -30,6 +30,7 @@ Known bugs / first fixes
 ☒ Bound client input so a connection cannot grow an in-memory line indefinitely.
 ☒ Reject oversized stored password hashes and excessive PBKDF iteration counts before expensive work.
 ☒ Make room enter/leave idempotent and clear stale `player.room` references on successful departure.
+☒ Prevent normal item creation, rewards, taking, and dropping from exceeding the persistence inventory bound or the room-item bound; preserve one-time rewards and finite shared resources when inventory is full.
 ☐ Continue reviewing for obvious bugs and security issues before each new feature patch.
 
 Core engine
@@ -40,7 +41,7 @@ Core engine
 ☒ Save supported player state on logout before removing the player from their final room, while preserving the previous snapshot if serialization fails.
 ☐ Add periodic autosave without adding an unbounded or uninterruptible background process.
 ☐ Add persistent IDs and templates for rooms, items, and world objects where needed.
-  ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat, royal possum bottle cap, and giant acorn.
+  ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat, royal possum bottle cap, giant acorn, Val's healing potion, Valkyrie mead, and horn-born special.
   ☐ Register each future persistent item explicitly as its content patch lands; never deserialize arbitrary class names.
 ☒ Add room-aware NPC activity snapshots and make the global manager skip detached and empty-room NPCs regardless of behavior type.
 ☒ Make ticker stop prompt and restartable, while refusing replacement if a previous ticker is still alive.
@@ -88,9 +89,11 @@ Commands / UX
 
 Village content
 
-☐ Add Val's Hella Holler as the tavern hub.
-☐ Add Val as the barkeep NPC with jokes, drink service, teleport-style attention, and cat defense.
-☐ Add the magical horn / drink creation system with explicit item effects.
+☒ Add the initial Val's Hella Holler tavern north of the Village Green, with the faithful room architecture, horn, cats, and social interaction hooks.
+☒ Add initial local-FSM Val behavior with jokes, drink service, teleport-style attention, injury/intoxication awareness, Wisp-harm awareness, and cat defense.
+☒ Add three bounded, persistent horn drink templates with explicit healing/intoxication effects and an always-available healing-potion path.
+☐ Extend the horn from its fixed healing/mead/impossible-special mapping to bounded custom drink names, descriptions, provenance, and optional effects without accepting executable or unbounded generated state.
+☐ Add food, currency/prices, tavern regular memory, intoxication decay/status effects, and richer bloodied/exhausted observations.
 ☒ Add the initial Village Green and Hanging Tree canopy with `/up`/`/down`, day/night Wisp descriptions, both acorn harvest verbs, bounded giant-acorn supply, and a room-aware low-harvest bonking hazard.
 ☐ Make canopy supply renewable and persist shared village ecology across restarts without enabling unbounded item creation.
 ☐ Add Master Corbel, Acorn Goblets, and Acorn Mash.
@@ -98,7 +101,8 @@ Village content
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects.
 ☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec.
 ☒ Add the non-verbal Wisp Mother with examine, one-hit protection, removal, prolonged darkness, recovery, and shared harm state.
-☐ Make Val and the remaining villagers react to Wisp Mother harm through that shared state.
+☒ Make Val react to Wisp Mother harm through shared runtime state when the next player enters the tavern.
+☐ Make the remaining villagers react to Wisp Mother harm and persist the shared consequence across restarts.
 
 Future
 

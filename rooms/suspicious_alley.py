@@ -1,4 +1,4 @@
-from core import NPCAction, Room
+from core import NPCAction, PLAYER_INVENTORY_LIMIT, Room
 from items.pimp_hat import PimpHat
 from items.possum_token import RoyalPossumBottleCap
 from npcs.bin_possum import BinPossum, BinPossumBehavior
@@ -203,8 +203,9 @@ class SuspiciousAlley(Room):
 
         with self.lock:
             first_reward = player_key not in self.rewarded_players
+            inventory_full = len(player.inventory) >= PLAYER_INVENTORY_LIMIT
 
-            if first_reward:
+            if first_reward and not inventory_full:
                 self.rewarded_players.add(player_key)
                 player.inventory.append(RoyalPossumBottleCap())
 
@@ -216,7 +217,12 @@ class SuspiciousAlley(Room):
             )
         )
 
-        if first_reward:
+        if first_reward and inventory_full:
+            session.send(
+                "The possum tries to award a bottle cap, but you cannot "
+                "carry anything else. It will keep the honour for later."
+            )
+        elif first_reward:
             session.send(
                 "The possum presses a royal possum bottle cap into your hand."
             )

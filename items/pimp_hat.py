@@ -38,8 +38,12 @@ class BlingCommand(Command):
         player = session.player
         hat = PimpHat()
 
-        with player.room.lock:
-            player.room.items.append(hat)
+        if not player.room.add_item(hat):
+            session.send(
+                "The sky considers dropping another hat, but there is no "
+                "safe place for it to land."
+            )
+            return
 
         player.room.broadcast("")
         player.room.broadcast(
@@ -47,5 +51,4 @@ class BlingCommand(Command):
         )
         player.room.broadcast("")
         session.send("It lands at your feet with impossible style.")
-
 

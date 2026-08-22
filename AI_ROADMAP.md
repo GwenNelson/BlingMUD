@@ -13,7 +13,7 @@ Agent instructions
 Summary
 
 - I reviewed the codebase first so the plan is anchored in what already exists rather than in the email ideas alone.
-- The immediate priority is to fix the two concrete engine bugs that are already present, then refactor the NPC layer around a generic behavior model, then add persistence/admin plumbing, and only after that wire in the email-driven village content.
+- The original engine fixes, generic local NPC behaviors, Brave Sir Knight migration, minimum character persistence, room-aware heartbeat scheduling, possum encounter, Green/canopy slice, and initial Val/tavern slice are now implemented. The next work should begin with a fresh bug/security audit, then continue the remaining persistence/admin and village milestones without adding OpenRouter until the user explicitly authorizes it.
 - This plan is meant to be a living document you can keep on disk and revisit over multiple sessions.
 
 First fixes
@@ -28,11 +28,12 @@ First fixes
 - [done] Bound the Knight concurrency test's barrier and thread joins, and add `run_tests.py` as the required 30-second subprocess watchdog so a regression cannot silently consume a CPU core indefinitely.
 - [done] Make random and FSM behaviors tolerate being detached or moved during a tick, reject Unicode terminal and bidirectional controls in structured NPC output, and prevent a backwards wall-clock adjustment from increasing the Knight's fire strength.
 - [done] Make `NPCManager.stop()` use a finite join and safely tolerate being called before startup, so shutdown cannot wait forever on a stuck ticker callback; runtime isolation of a non-returning callback remains a scheduler task.
+- [done] Align gameplay item creation with persistence bounds: cap player inventories and room item lists, reject take/drop/bling/reward/harvest/order operations safely at the boundary, and do not consume one-time rewards or finite shared resources when a player cannot carry the result.
 
 What exists vs what is still planned
 
-- Implemented now: the first-fix engine bugs above, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with whitelisted item templates and logout save/load, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, the first Village Green/Hanging Tree/Wisp Mother slice, and regression coverage for all of them.
-- Still planned: persistence autosave and future schema migrations beyond the legacy-empty-to-v1 path, optional structured NPC memory, bounded isolation for a trusted callback that never returns, the `llm_fsm` advisory wrapper and OpenRouter failover, popularity/priority budgeting, admin tooling, transport security, Corbel and the village economy, durable world-state persistence, and the remaining village content from the email threads.
+- Implemented now: the first-fix engine bugs above, bounded client input and stored-password work factors, stronger password storage with legacy migration, versioned and bounded character JSON with six whitelisted item templates plus health/intoxication state and logout save/load, matching gameplay inventory/room-item limits, NPC-manager removal cleanup, explicit room activity snapshots, global hot-room-only NPC heartbeat selection, restartable/event-stoppable ticker lifecycle, the shared NPC behavior/event-dispatch contract, Unicode-control-safe structured speech/emote actions, reusable local random and data-backed FSM behaviors, Brave Sir Knight's migration onto `FSMBehavior`, bounded non-repeating dialogue selection, detached-room tick safety, the stateful Suspicious Alley bin-possum encounter, the first Village Green/Hanging Tree/Wisp Mother slice, the initial Val's Hella Holler/Val/fixed-drink slice, and regression coverage for all of them.
+- Still planned: persistence autosave and future schema migrations beyond the backward-compatible version-1 additions, intoxication decay and richer status effects, optional structured NPC memory, bounded isolation for a trusted callback that never returns, the `llm_fsm` advisory wrapper and OpenRouter failover, popularity/priority budgeting, admin tooling, transport security, Corbel and the village economy, durable world-state persistence, richer custom horn drinks/food/prices/regulars, and the remaining village content from the email threads.
 - Future agents must keep this section current whenever they land meaningful implementation work; if they do not, the roadmap will drift out of sync with reality.
 - OpenRouter remains design-only and explicitly deferred; implementation requires a later, explicit user authorization.
 
@@ -86,13 +87,13 @@ Persistence and character state
 - Keep the current SQLite account store, but formalize player state as a versioned JSON blob rather than a loose prototype payload.
 - Preserve the existing login table shape for compatibility, but treat the player state column as a first-class serialized character snapshot with migration/version metadata.
 - Save character state on logout and add periodic autosave so a disconnect does not lose progress.
-- Serialize room ID, inventory, equipment, stats, status effects, quest flags, admin flags, and NPC relationship/memory data explicitly rather than trying to pickle live objects.
+- Serialize room ID, inventory, equipment, stats, status effects, quest flags, and NPC relationship/memory data explicitly rather than trying to pickle live objects. Never serialize authenticated session admin privilege as character state.
 - Add a player-state repository layer so loading/saving a character does not depend on session code.
 - Add migrations for future schema evolution so new fields can be added without breaking old characters.
 - Keep auth data and gameplay state separate in the design, even if they initially live in the same SQLite database.
 - Password storage now uses salted PBKDF2-SHA256 and upgrades legacy SHA-256 hashes after a successful login; this is implemented, but Telnet transport remains unencrypted and must not be treated as secure authentication over an untrusted network.
-- [done: minimum layer] `player_state.py` owns version-1 JSON serialization and restoration for the state the game actually has today: room ID, fabulousness, inventory, and equipment. Empty legacy `{}` state migrates to safe version-1 defaults when loaded.
-- [done: minimum layer] Current item restoration is an explicit `pimp_hat` / `royal_possum_bottle_cap` / `giant_acorn` template whitelist with bounded payload, inventory, equipment, stat, password, and input sizes. Unknown templates and inconsistent equipment fail closed; no save data controls imports or class names.
+- [done: minimum layer] `player_state.py` owns version-1 JSON serialization and restoration for the state the game actually has today: room ID, fabulousness, maximum/current health, intoxication, inventory, and equipment. Empty legacy `{}` state and older version-1 documents without health/intoxication fields load with safe defaults.
+- [done: minimum layer] Current item restoration is an explicit `pimp_hat` / `royal_possum_bottle_cap` / `giant_acorn` / `val_healing_potion` / `valkyrie_mead` / `horn_born_special` template whitelist with bounded payload, inventory, equipment, stat, password, and input sizes. Gameplay acquisition paths share the same 100-item inventory bound, room item lists have a separate 100-item bound, unknown templates and inconsistent equipment fail closed, and no save data controls imports or class names.
 - [done: minimum layer] Successful logins restore the last known room, with removed/unknown rooms falling back to the starting room. Disconnect saves before room removal, and a failed or lossy save leaves the previous database state intact while cleanup continues.
 - [security invariant] Admin privilege remains session-only and is deliberately absent from character JSON; never turn a gameplay save into an authentication or authorization source.
 - Still required here: periodic autosave, explicit migrations when version 2 is introduced, more item templates as real content lands, and eventual structured status/quest/relationship fields when those systems actually exist.
@@ -153,6 +154,9 @@ Val’s Hella Holler, per-location checklist
   - drink must still become a concrete in-engine item
   - drinks must carry explicit effects, including healing and intoxication
   - always-allowed healing potion path should remain explicit and reliable
+- [done: initial slice] The Holler is connected north of the Green and includes the river-rock/tile/fire/candle/booth/platform/tree-bar/bottle/cat identity. Val is a local `FSMBehavior` with Asgard-refugee lore, bounded jokes, horn service, cosmetic same-room omnipresence, injury/intoxication notices, ordered multi-action output, Wisp-harm awareness, and non-lethal cat defense. This path has no provider configuration or network dependency.
+- [done: initial drink mechanics] `/order` maps healing concepts, ordinary alcohol concepts, and all other bounded concepts to three fixed concrete persistent items. `/drink` applies clamped health/intoxication effects, consumes successful drinks, preserves alcohol refused at maximum intoxication, and leaves healing potion available at maximum intoxication. All current drinks are on the house because currency does not exist yet.
+- [remaining fidelity] Add actual food and prices/economy, bounded regular/recent-order/bad-behaviour memory, exhaustion and bloodied-gear signals, intoxication decay and richer side effects, and safe custom drink payloads with names/descriptions/provenance. The current impossible request becomes a fixed `horn-born special`; cosmetic duplicate service does not create multiple Val NPCs.
 
 Village Green, per-location checklist
 
@@ -231,7 +235,7 @@ Wisp Mother, per-location checklist
 - Failure / consequence:
   - attacking the Wisp Mother should have obvious village consequences, not merely personal combat consequences
 - [done: initial slice] The non-verbal Mother can be looked at or examined for a warm pulse, protected with a one-hit Wisp ward, removed by violence, and restored after a thirty-minute runtime darkness period. Her loss immediately darkens the Green, broadcasts village horror, and increments shared harm state for later NPC reactions.
-- [remaining consequence] Val and later villagers still need to consume the shared harm count in their own reactions, and the runtime darkness/acorn ecology still needs durable world-state persistence before it can survive restart.
+- [partly done consequence] Val consumes the shared harm count on the next tavern arrival and responds with anger plus a cat reaction. Other villagers still need reactions, and the runtime darkness/acorn ecology still needs durable world-state persistence before it can survive restart.
 
 The Smithereens, per-location checklist
 
@@ -458,11 +462,13 @@ Test plan
 - Verify that an empty room causes no NPC ticks and no OpenRouter calls.
 - The local scheduler tests now prove that custom behaviors, not just built-in random/FSM behaviors, receive no heartbeat while detached or in empty rooms; they also cover room activity accounting, stale-event rejection, idempotent lifecycle events, cleared room references, prompt stop, clean restart, and refusal to replace a still-live ticker.
 - The initial Green tests cover world wiring, `/up` and `/down`, day/night descriptions, hidden hazard actors, bounded `harvest acorn` and `gather acorn`, visible danger reduction, funny bonks only while danger remains, giant-acorn persistence, and Wisp Mother examine/protect/harm/darkness/recovery behavior.
+- The initial Holler tests cover world wiring and faithful visual details; Val's local FSM identity, speech triggers, bounded joke/lore/flirt/call/examine paths, injury/intoxication and shared Wisp-harm reactions, multi-action horn service, all three drink mappings and effects, intoxication refusal, non-lethal cat defense, and unrelated-command pass-through.
+- Item-limit regressions prove that full inventories and rooms do not lose items, equipment effects, possum reward entitlement, or finite acorn supply; `/bling`, `/take`, `/drop`, canopy harvest, possum rewards, and Val orders all stop at the relevant bound.
 - Verify that a populated room wakes NPCs correctly and that LLM calls are only made for eligible NPCs.
 - Verify failover from LLM to FSM on timeout, invalid JSON, or OpenRouter errors, and verify restoration after a healthy probe.
 - Verify priority ordering by simulating multiple active NPCs with different complexity and popularity scores.
 - Verify save/load round-trips for character state, inventory, equipment, and status effects.
-- The implemented minimum-layer tests now cover room/inventory/equipment/stat round trips, legacy empty state, corrupt/oversized/unknown state rejection, safe room fallback, versioned new accounts, login restoration, logout ordering, failed-save preservation, session-only admin state, bounded input, and bounded password work. Status effects remain unimplemented and therefore are still a future test target.
+- The implemented minimum-layer tests now cover room/inventory/equipment/stat round trips including health, maximum health, intoxication, and all six item templates; legacy empty state and older version-1 health defaults; corrupt/oversized/unknown/inconsistent state rejection; safe room fallback; versioned new accounts; login restoration; logout ordering; failed-save preservation; session-only admin state; bounded input; and bounded password work. General status effects remain unimplemented and therefore are still a future test target.
 - Verify the new room interactions from the email: `harvest acorn`, `browse scrap`, `talk eisele`, `read book`, `look mirror`, and the Wisp Mother / Val reaction paths.
 - Verify that the new content does not break the existing Crossroads and Fabulous Chamber demo rooms.
 
@@ -549,7 +555,7 @@ Persistence model
   - status effects
   - social memory and NPC relationships
   - progression / flags / quests
-  - admin status
+  - non-authority gameplay roles or flags, if later required; never authenticated session admin status
 - Save files should be versioned and migration-friendly so that future features like quests, status effects, and custom drinks can be added without breaking old characters.
 - The save layer should own serialization details; gameplay code should ask for “save this player” and not care about the database format.
 
@@ -615,6 +621,8 @@ Drink system details
 - The healing potion path should be always available and explicit.
 - Alcohol-heavy drinks should create measurable negative side effects so the tavern does not become a free-stat exploit.
 - Drink generation should be deterministic enough to be debugged, even if the exact flavor text is whimsical.
+- Implemented first slice: `Drink` applies explicit clamped health and intoxication changes. `ValHealingPotion`, `ValkyrieMead`, and `HornBornSpecial` are fixed, whitelisted templates that survive save/load; the healing potion remains usable when alcohol is refused at the intoxication ceiling. This is a safe mechanical foundation, not yet the requested generated-name/description/provenance system.
+- Remaining drink work: define a bounded serializable custom-drink schema, deterministic concept normalization, allowed effect tables, intoxication decay and status effects, Acorn Goblet integration, food, and a real price/economy layer. Never persist raw model output or allow a generated concept to select classes, code, unbounded text, or arbitrary stat changes.
 
 Village Green and Hanging Tree
 
@@ -758,15 +766,18 @@ What exists vs what is still planned
   - Crossroads and Fabulous Chamber demo content
   - a stateful Suspicious Alley bin-possum encounter with local commands, a two-state FSM, safe item transfer, one-per-player rewards, and no LLM dependency
   - an initial Village Green and Hanging Tree canopy with shared bounded runtime state, day/night Wisp lighting, harvestable persistent giant acorns, room-aware falling-acorn hazards, and a non-verbal protectable Wisp Mother whose loss darkens the Green
+  - an initial Val's Hella Holler north of the Green, with faithful tavern scenery, a complete local-FSM Val, fixed multi-action horn service, jokes/lore/attention/cat-defense interactions, and a first cross-room reaction to Wisp Mother harm
+  - bounded health and intoxication mechanics plus three concrete persistent Val drink templates, with healing/alcohol effects and a global `/drink` command
+  - shared hard limits for player inventories and room item lists, enforced by current take/drop/creation/reward/harvest/order paths so normal play cannot produce an unsaveable oversized inventory
   - simple item/equipment model
   - NPC removal that also unregisters the NPC from the global manager
 - Still planned:
-  - persistence autosave, future version migrations, and schemas for status effects, quests, and relationships
+  - persistence autosave, future version migrations, and schemas for general status effects, quests, relationships, custom drinks, and durable world ecology
   - bounded isolation for a trusted NPC callback that never returns
   - OpenRouter integration and LLM failover, deferred until explicitly re-authorized by the user
   - budgeted NPC priority system
   - admin inspection/control commands
-  - the remaining email-driven village content, including Corbel's acorn economy and durable shared world state
+  - the remaining email-driven village content, including Corbel's acorn economy, Val's food/prices/regular memory and richer horn output, remaining Wisp reactions, and durable shared world state
   - structured room/NPC event schemas
   - content data loading / world authoring layer
   - encrypted client transport or a secure front end for authentication outside trusted networks
@@ -825,14 +836,14 @@ Milestone 5: add admin and persistence tooling
 
 Milestone 6: implement the email content faithfully
 
-- Build Val’s Hella Holler and Val.
+- [done: initial slice] Build Val’s Hella Holler and Val with faithful room identity, a complete local FSM, fixed persistent drinks, shared Wisp-harm awareness, and bounded room-local interaction verbs. Food/prices, structured regular memory, richer observations, and safe custom horn-drink payloads remain.
 - [done: initial slice] Build the Village Green and Hanging Tree with traversal, bounded harvest mechanics, danger reduction, and persistent giant-acorn items.
 - Build the smithy and Eisele.
 - Build Tackdriver.
 - Build Ceridwen’s cottage and the herb garden.
 - Build the Temple of the Self.
 - [done: initial slice] Build the Wisp Mother and local acorn hazard loop; village-wide NPC reactions and durable world-state persistence remain.
-- Add the drink, scrap, respec, confusion, and mirror systems that make the content mechanically real.
+- [partly done] Add the drink, scrap, respec, confusion, and mirror systems that make the content mechanically real. The fixed-template health/intoxication drink foundation is implemented; custom drinks and every non-drink system remain.
 
 Room-by-room content expansion
 
@@ -852,6 +863,7 @@ Val’s Hella Holler
 - The bar should feel like a place where impossible drinks are normal.
 - The room should imply that adventurers are feeding the tavern’s energy, so the venue can afford to be generous.
 - The tavern should not be a static “shop room”; it should feel like a living social hub.
+- [implemented first slice] The connected room includes every listed visual anchor, Val's active local FSM and timed social emote, bounded commands for orders/jokes/lore/flirt/call/examine/attack, and fixed on-the-house drink service. A true economy, food, performances, and persistent regular activity remain planned.
 
 Val
 
@@ -868,6 +880,7 @@ Val
   - protect the tavern with cats if threatened
 - Her joke responses should be short, slightly off-color, and voice-consistent with a Norse tavern keeper.
 - Her drink service should always be grounded in the magical horn concept, even if the engine represents the drink as a concrete item.
+- [implemented first slice] Val is a thin NPC around `ValBehavior(FSMBehavior)`. She can emit multiple validated actions, recognizes conversational cues, notices current health/intoxication, reacts to shared Wisp harm, and uses cats for non-lethal defense. `/call val` represents her magical omnipresence cosmetically; it does not spawn duplicate NPCs.
 
 The Village Green
 

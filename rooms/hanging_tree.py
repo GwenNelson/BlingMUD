@@ -1,4 +1,4 @@
-from core import Room
+from core import PLAYER_INVENTORY_LIMIT, Room
 from items.giant_acorn import GiantAcorn
 
 
@@ -50,18 +50,22 @@ class HangingTreeCanopy(Room):
         player = session.player
 
         with self.lock:
-            already_carrying = any(
+            if len(player.inventory) >= PLAYER_INVENTORY_LIMIT:
+                snapshot = "inventory_full"
+            elif any(
                 isinstance(item, GiantAcorn)
                 for item in player.inventory
-            )
-
-            if already_carrying:
+            ):
                 snapshot = "already_carrying"
             else:
                 snapshot = self.village_state.harvest_acorn()
 
                 if snapshot is not None:
                     player.inventory.append(GiantAcorn())
+
+        if snapshot == "inventory_full":
+            session.send("You cannot carry anything else.")
+            return True
 
         if snapshot == "already_carrying":
             session.send(
