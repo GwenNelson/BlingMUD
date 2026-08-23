@@ -58,11 +58,17 @@ class OpenRouterProviderTests(unittest.TestCase):
 
     def test_catalogue_accepts_only_known_zero_price_text_models_and_rotates(self):
         provider = OpenRouterProvider(self.directory.name, opener=self._opener)
-        self.assertEqual(provider.refresh_models(), ("free/b",))
-        self.assertEqual(provider.next_model(), "free/b")
+        self.assertEqual(provider.refresh_models(), ("paid/a", "free/b"))
+        self.assertEqual(provider.next_model(), "paid/a")
         self.assertEqual(provider.next_model(), "free/b")
         self.assertEqual(provider.status, "healthy")
         self.assertNotIn(b"test-key", self.requests[0][0].data or b"")
+
+    def test_paid_budget_is_bounded_and_free_models_remain_available(self):
+        provider = OpenRouterProvider(self.directory.name, opener=self._opener)
+        provider.refresh_models()
+        provider.paid_reserved = 1.0
+        self.assertEqual(provider.next_model(), "free/b")
 
     def test_insecure_key_is_disabled(self):
         key_path = os.path.join(self.directory.name, "openrouter.key")
