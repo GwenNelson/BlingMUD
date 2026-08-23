@@ -99,13 +99,20 @@ class CommandDispatchTests(unittest.TestCase):
 
     def test_bare_mapper_commands_are_additive_and_other_text_is_chat(self):
         north = Room("north", "North", "A northern room.")
+        east = Room("east", "East", "An eastern room.")
         self.room.add_exit("north", north)
+        self.room.add_exit("east", east)
         north.add_exit("south", self.room)
 
         result = self.session.dispatch_authenticated_input("look")
         self.assertEqual(result, "mapper_command")
         self.assertIn("Global description", self.transcript())
         self.assertNotIn("> look", self.transcript())
+        exit_lines = [
+            line for line in self.transcript().splitlines()
+            if line.startswith("Exits:")
+        ]
+        self.assertEqual(exit_lines, ["Exits: north east"])
 
         result = self.session.dispatch_authenticated_input("N")
         self.assertEqual(result, "mapper_command")

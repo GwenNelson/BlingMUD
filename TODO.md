@@ -56,6 +56,7 @@ Core engine
 ☒ Replace both input paths with one bounded incremental Telnet/UTF-8 parser covering fragmented negotiation/subnegotiation, escaped IAC, CR-LF/CR-NUL/LF, Unicode backspace, unsafe terminal/bidi controls, and explicit Tab events.
 ☒ Add bounded GMCP option-201 negotiation, Core identity/subscription/Ping handling, change-suppressed character snapshots, and mapper-ready `Room.Info` with permanent numeric production-room IDs.
 ☒ Keep slash commands while accepting only bare look and standard movement tokens for Mudlet generic-mapper/speedwalk compatibility; provide `/say` for literal reserved-word speech.
+☒ Print non-empty exits on one conventional line so Mudlet's bundled text-trigger generic mapper captures the actual directions instead of an empty `Exits:` header.
 ☒ Add 60-second autosave that compares bounded serialized snapshots, skips busy state locks without blocking selector I/O, and submits changed characters only.
 ☒ Route selector-era character writes through one 64-key bounded, per-player coalescing persistence writer; retry after failures and wait for a queued final snapshot on disconnect.
 ☒ Make immediate persistence-queue rejection notify bookkeeping callbacks so rejected character/world snapshots remain retryable.

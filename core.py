@@ -343,9 +343,9 @@ class Room(object):
             )
 
         if self.exits:
-            player.session.send("Exits:")
-            for e in self.exits.keys():
-                player.session.send("\t %s" % colour(e,Colour.BRIGHT_WHITE))
+            player.session.send(
+                "Exits: {0}".format(" ".join(self.exits.keys()))
+            )
         else:
             player.session.send("There are no obvious exits.")
 
