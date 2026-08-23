@@ -22,7 +22,9 @@ class BlockingProvider(object):
 
 class ReplyProvider(object):
     status = "healthy"
+    def __init__(self): self.messages = []
     def complete(self, messages, max_tokens=8):
+        self.messages.append(messages)
         return '{"choice":0,"reply":"Well met, traveller."}'
 
 
@@ -69,7 +71,11 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(runtime.shutdown())
 
     def test_first_valid_reply_switches_runtime_to_llm_ready(self):
-        runtime = NPCAdvisorRuntime(ReplyProvider(), workers=1, queued=2)
+        provider = ReplyProvider()
+        runtime = NPCAdvisorRuntime(
+            provider, workers=1, queued=2,
+            npc_prompts={"Knight": "You are a highly specific knight."}
+        )
         completed = threading.Event()
         received = []
         frame = {
@@ -88,6 +94,17 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(runtime.status_snapshot()["llm_ready"])
             self.assertTrue(runtime.is_ready("Knight"))
             self.assertFalse(runtime.is_ready("Val"))
+            self.assertIn(
+                "You are a highly specific knight.",
+                provider.messages[0][0]["content"]
+            )
+            self.assertIn(
+                "Avoid vague aphorisms", provider.messages[0][0]["content"]
+            )
+            self.assertNotIn("Local.", provider.messages[0][1]["content"])
+            self.assertIn(
+                '\"type\":\"say\"', provider.messages[0][1]["content"]
+            )
         finally:
             self.assertTrue(runtime.shutdown())
 

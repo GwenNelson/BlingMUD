@@ -21,6 +21,9 @@ class AIConfigTests(unittest.TestCase):
         try:
             self.assertEqual(world.rooms["crossroads"].knight.behavior_mode, NPCBehavior.MODE_FSM)
             self.assertEqual(world.rooms["vals_hella_holler"].val.behavior_mode, NPCBehavior.MODE_FSM)
+            self.assertIn("You are Brave Sir Knight", runtime.npc_prompts["Brave Sir Knight"])
+            self.assertIn("You are Val", runtime.npc_prompts["Val"])
+            self.assertNotIn("#", runtime.npc_prompts["Brave Sir Knight"])
         finally:
             runtime.shutdown()
 

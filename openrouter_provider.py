@@ -424,7 +424,7 @@ class OpenRouterProvider(object):
         encoded_messages = json.dumps(
             messages, ensure_ascii=True, separators=(",", ":")
         ).encode("utf-8")
-        if len(encoded_messages) > 8192:
+        if len(encoded_messages) > 16384:
             raise ValueError("messages are too large")
         for unused in range(min(4, len(self.paid_models) + len(self.models))):
             model = self.next_model()

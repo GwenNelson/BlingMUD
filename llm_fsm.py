@@ -16,7 +16,8 @@ class AdvisoryFSMBehavior(NPCBehavior):
 
     _LOCAL = frozenset((
         "fallback", "advisor", "advisory_failures", "advisory_calls",
-        "npc", "_advisory_lock", "local_only", "_pending_replies"
+        "npc", "_advisory_lock", "local_only", "_pending_replies",
+        "_conversation"
     ))
 
     def __getattr__(self, name):
@@ -43,6 +44,7 @@ class AdvisoryFSMBehavior(NPCBehavior):
         self._advisory_lock = threading.RLock()
         self.local_only = False
         self._pending_replies = deque(maxlen=4)
+        self._conversation = deque(maxlen=3)
 
     @property
     def mode(self):
@@ -142,6 +144,14 @@ class AdvisoryFSMBehavior(NPCBehavior):
         }
         if method in ("on_say", "on_emote") and len(arguments) >= 2:
             frame["input"] = str(arguments[1])[:500]
+            frame["speaker"] = str(
+                getattr(arguments[0], "name", "traveller")
+            )[:80]
+        if method == "on_say":
+            with self._advisory_lock:
+                history = tuple(dict(item) for item in self._conversation)
+            if history:
+                frame["history"] = history
         try:
             if getattr(self.advisor, "supports_callbacks", False):
                 self.advisor.observe(frame, self._store_hint)
@@ -172,6 +182,11 @@ class AdvisoryFSMBehavior(NPCBehavior):
                 setter(frame.get("state"), candidate_id, choice)
             if frame.get("event") == "on_say" and reply:
                 self._pending_replies.append(reply)
+                self._conversation.append({
+                    "speaker": str(frame.get("speaker", "traveller"))[:80],
+                    "input": str(frame.get("input", ""))[:500],
+                    "reply": reply[:240]
+                })
 
     def on_player_enter(self, player):
         return self._dispatch("on_player_enter", player)

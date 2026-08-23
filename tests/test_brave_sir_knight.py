@@ -727,6 +727,18 @@ class BraveSirKnightCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.output[0][0], "say")
         self.assertEqual(self.knight.known_travellers, before)
 
+    def test_speech_fallback_recognizes_departure_intent(self):
+        actions = self.knight.on_say(self.player, "I am leaving now")
+        self.assertEqual(
+            actions[0].text,
+            "Fare thee well, traveller. May the road be gentle beneath your feet."
+        )
+        actions = self.knight.on_say(Player("Gwen"), "goodbye Brave Sir Knight")
+        self.assertEqual(
+            actions[0].text,
+            "Fare thee well, my Lady. I shall keep the crossroads safe until thy return."
+        )
+
     def test_concurrent_decisions_keep_their_action_buffers_separate(self):
         behavior = self.knight.behavior
         barrier = threading.Barrier(2, timeout=1.0)

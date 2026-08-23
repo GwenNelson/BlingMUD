@@ -496,6 +496,21 @@ class BraveSirKnightBehavior(FSMBehavior):
                 "Take water before the road takes more from you than expected.",
                 "A full bucket is a small kindness with excellent reach."
             )
+        elif any(phrase in lowered for phrase in (
+            "goodbye", "farewell", "leaving now", "going now", "must go"
+        )):
+            if self._is_lady_gwen(player.name):
+                choices = (
+                    "Fare thee well, my Lady. I shall keep the crossroads safe until thy return.",
+                    "Safe roads, Lady Gwen. This watch is brighter for having seen thee.",
+                    "Until we meet again, my Lady. May every road rise kindly beneath thy feet."
+                )
+            else:
+                choices = (
+                    "Fare thee well, traveller. May the road be gentle beneath your feet.",
+                    "Go safely. I shall keep watch should your road return you here.",
+                    "Until we meet again, traveller. Carry courage with you."
+                )
         else:
             choices = (
                 "I hear you. The road rewards patience and a watchful eye.",

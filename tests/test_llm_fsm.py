@@ -105,6 +105,29 @@ class AdvisoryFSMTests(unittest.TestCase):
         room.leave(player, announce=False)
         room.remove_npc(npc)
 
+    def test_speech_frame_includes_speaker_and_bounded_recent_conversation(self):
+        advisor = ReplyAdvisor()
+        behavior = AdvisoryFSMBehavior(CandidateFallback(), advisor)
+        npc = NPC("Test", "test", behavior=behavior)
+        room = Room("test", "Test", "test")
+        room.add_npc(npc)
+        player = Player("Gwen")
+        room.enter(player, announce=False)
+        behavior.on_say(player, "goodbye")
+        behavior.on_say(player, "I am leaving now")
+        self.assertEqual(advisor.frames[0]["speaker"], "Gwen")
+        self.assertNotIn("history", advisor.frames[0])
+        self.assertEqual(
+            advisor.frames[1]["history"][0],
+            {
+                "speaker": "Gwen",
+                "input": "goodbye",
+                "reply": "A remote but bounded reply."
+            }
+        )
+        room.leave(player, announce=False)
+        room.remove_npc(npc)
+
 
 if __name__ == "__main__":
     unittest.main()

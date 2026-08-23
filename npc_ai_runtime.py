@@ -15,7 +15,7 @@ class NPCAdvisorRuntime(object):
     supports_callbacks = True
     def __init__(
         self, provider, workers=2, queued=16, time_source=None,
-        global_limit=120, npc_limit=30, room_limit=60
+        global_limit=120, npc_limit=30, room_limit=60, npc_prompts=None
     ):
         if workers < 1 or workers > 4 or queued < 1 or queued > 64:
             raise ValueError("invalid advisor runtime bounds")
@@ -25,6 +25,15 @@ class NPCAdvisorRuntime(object):
         ):
             raise ValueError("invalid advisory budget bounds")
         self.provider = provider
+        self.npc_prompts = {}
+        for npc_name, prompt in (npc_prompts or {}).items():
+            if (
+                isinstance(npc_name, str)
+                and 1 <= len(npc_name) <= 80
+                and isinstance(prompt, str)
+                and 1 <= len(prompt.encode("utf-8")) <= 4096
+            ):
+                self.npc_prompts[npc_name] = prompt
         self.time_source = time_source or time.monotonic
         self.global_limit = global_limit
         self.npc_limit = npc_limit
@@ -58,7 +67,7 @@ class NPCAdvisorRuntime(object):
         self.worker = self.workers[0]
 
     def observe(self, frame, result_handler=None):
-        if not isinstance(frame, dict) or len(frame) > 10:
+        if not isinstance(frame, dict) or len(frame) > 12:
             raise ValueError("invalid advisory frame")
         with self.lock:
             if self.closed or (
@@ -200,13 +209,46 @@ class NPCAdvisorRuntime(object):
                         self.last_catalogue_request = self.time_source()
                     log_event("npc_ai.catalogue_refresh", result="success")
                 else:
-                    prompt = json.dumps(frame, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+                    prompt_frame = dict(frame)
+                    if frame.get("event") == "on_say":
+                        prompt_frame["candidates"] = [
+                            {
+                                "id": str(candidate.get("id", ""))[:80],
+                                "actions": [
+                                    {"type": str(action.get("type", ""))[:20]}
+                                    for action in candidate.get("actions", ())[:8]
+                                    if isinstance(action, dict)
+                                ]
+                            }
+                            for candidate in frame.get("candidates", ())[:8]
+                            if isinstance(candidate, dict)
+                        ]
+                    prompt = json.dumps(prompt_frame, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
                     if len(prompt) > 8192:
                         raise ValueError("advisory frame is too large")
+                    persona = self.npc_prompts.get(
+                        str(frame.get("npc", ""))[:80],
+                        "You are the named NPC in a text-based MUD."
+                    )
+                    contract = (
+                        "\n\nRespond to the player's current input directly and "
+                        "specifically. Candidate metadata only defines valid choice "
+                        "slots; it deliberately omits canned text, so compose the "
+                        "reply from the persona and conversation. Avoid vague "
+                        "aphorisms and generic "
+                        "acknowledgements. Recognize greetings, questions, praise, "
+                        "insults, farewells, and stated intentions. Use the bounded "
+                        "history only for conversational continuity. Return exactly "
+                        "one complete JSON object: {\"choice\":0,\"reply\":\"your "
+                        "in-character answer\"}. The reply must be at most 240 "
+                        "characters and use complete sentences with normal ending "
+                        "punctuation. Never invent game actions, commands, items, "
+                        "damage, movement, or state changes."
+                    )
                     response = self.provider.complete([
-                        {"role": "system", "content": "You are the named NPC. Choose one offered candidate as a tone anchor. For player speech, directly answer the input in character in at most 240 characters; do not merely repeat a candidate unless it genuinely answers the player. Return one complete JSON object only: {\"choice\":0,\"reply\":\"bounded reply\"}. Never invent game actions, commands, items, damage, or state changes."},
+                        {"role": "system", "content": persona + contract},
                         {"role": "user", "content": prompt}
-                    ], max_tokens=128)
+                    ], max_tokens=160)
                     if response is None:
                         raise ValueError("provider returned no response")
                     parsed = json.loads(response)
@@ -227,7 +269,7 @@ class NPCAdvisorRuntime(object):
                         if not isinstance(reply, str):
                             raise ValueError("missing advisory reply")
                         reply = reply.strip()
-                        if not 1 <= len(reply) <= 500 or any(
+                        if not 1 <= len(reply) <= 240 or any(
                             unicodedata.category(character) in ("Cc", "Cf", "Cs")
                             for character in reply
                         ):

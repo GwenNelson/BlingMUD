@@ -90,6 +90,7 @@ NPCs
 ☒ Add OpenRouter support behind a bounded paid-first adapter with catalogue validation, a hard one-dollar daily reservation cap, free-model fallback, rotation, per-model cooldowns, bounded responses, redirect rejection, owner-only key validation, and circuit-breaker fallback.
 ☒ Fix paid routing price units, prefer a reliable inexpensive instruction model, persist the UTC-day budget, and prove a real Knight query reaches `llm_fsm` only after a validated response.
 ☒ Add ignored owner-only raw OpenRouter request/response audit logging without authorization headers or API-key leakage, and fail closed to local FSM before calls that cannot reserve a complete audit pair.
+☒ Make OpenRouter dialogue use the bounded Knight/Val persona templates, speaker identity, and three-exchange conversational context; withhold canned candidate text from speech prompts to stop generic parroting, and preserve an immediate intent-aware FSM farewell.
 ☒ Add bounded global, room, and per-NPC advisory request budgets so low-priority NPCs stay on simpler behavior when capacity is exhausted.
 
 OpenRouter implementation is explicitly authorized. Live catalogue refresh has been verified with the local provider; live completion may still exhaust the currently advertised free pool and must fall back locally.
