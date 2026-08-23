@@ -7,6 +7,7 @@ import unittest
 
 import blingmud
 import server_runtime
+from gmcp import GMCP_OPTION, encode_gmcp
 
 
 class FakeClock(object):
@@ -129,6 +130,38 @@ class SelectorSocketpairIntegrationTests(unittest.TestCase):
         self._pump_until(lambda: not self.connection.has_output())
         self.assertIn(b"> ", self.output)
         self.assertIn(b"fabulous", self.output)
+
+    def test_real_readiness_negotiates_gmcp_and_sends_state(self):
+        session = blingmud.Session(
+            self.connection,
+            self.connection.address,
+            blingmud.WORLD
+        )
+        player = blingmud.Player("SocketMapper")
+        player.session = session
+        session.player = player
+        blingmud.WORLD.starting_room.enter(player, announce=False)
+        self.connection.attach_session(session)
+        self.connection.authenticated = True
+
+        self.client_socket.sendall(bytes((server_runtime.IAC,)))
+        self.client_socket.sendall(
+            bytes((server_runtime.DO, GMCP_OPTION))
+        )
+        supports = encode_gmcp(
+            "Core.Supports.Set",
+            ["Char 1", "Room 1"]
+        )
+        self.client_socket.sendall(supports[:7])
+        self.client_socket.sendall(supports[7:] + b"\r\n")
+        self._pump_until(lambda: self.connection.input_lines.qsize() >= 3)
+
+        self.assertEqual(session.read_line(), "")
+        self._pump_until(lambda: not self.connection.has_output())
+        self.assertIn(b"Char.Name", self.output)
+        self.assertIn(b"Char.Vitals", self.output)
+        self.assertIn(b"Room.Info", self.output)
+        self.assertIn(b'"id":"town_square"', self.output)
 
     def test_selector_auth_pool_hides_password_and_promotes_once(self):
         descriptor, self.database_path = tempfile.mkstemp(

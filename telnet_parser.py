@@ -11,6 +11,7 @@ WILL = 251
 WONT = 252
 DO = 253
 DONT = 254
+DEFAULT_SUBNEGOTIATION_LIMIT = 16 * 1024
 
 
 class TextInputEvent(object):
@@ -34,6 +35,18 @@ class TabInputEvent(object):
         self.text = text
 
 
+class TelnetNegotiationEvent(object):
+    def __init__(self, command, option):
+        self.command = command
+        self.option = option
+
+
+class TelnetSubnegotiationEvent(object):
+    def __init__(self, option, data):
+        self.option = option
+        self.data = data
+
+
 def _allowed_input_character(character):
     category = unicodedata.category(character)
 
@@ -49,14 +62,27 @@ class TelnetInputParser(object):
     STATE_DATA = "data"
     STATE_IAC = "iac"
     STATE_OPTION = "option"
+    STATE_SUBNEGOTIATION_OPTION = "subnegotiation_option"
     STATE_SUBNEGOTIATION = "subnegotiation"
     STATE_SUBNEGOTIATION_IAC = "subnegotiation_iac"
 
-    def __init__(self, maximum_length):
+    def __init__(
+        self,
+        maximum_length,
+        maximum_subnegotiation_length=DEFAULT_SUBNEGOTIATION_LIMIT
+    ):
         self.maximum_length = 0
         self.set_maximum_length(maximum_length)
         self.characters = []
         self.state = self.STATE_DATA
+        self.pending_option_command = None
+        self.subnegotiation_option = None
+        self.subnegotiation_data = bytearray()
+        self.subnegotiation_overflowed = False
+        self.maximum_subnegotiation_length = max(
+            0,
+            int(maximum_subnegotiation_length)
+        )
         self.pending_cr = False
         self.decoder = self._new_decoder()
 
@@ -186,26 +212,70 @@ class TelnetInputParser(object):
 
         for byte in data:
             if self.state == self.STATE_OPTION:
+                events.append(
+                    TelnetNegotiationEvent(self.pending_option_command, byte)
+                )
+                self.pending_option_command = None
                 self.state = self.STATE_DATA
+                continue
+
+            if self.state == self.STATE_SUBNEGOTIATION_OPTION:
+                self.subnegotiation_option = byte
+                self.subnegotiation_data = bytearray()
+                self.subnegotiation_overflowed = False
+                self.state = self.STATE_SUBNEGOTIATION
                 continue
 
             if self.state == self.STATE_SUBNEGOTIATION:
                 if byte == IAC:
                     self.state = self.STATE_SUBNEGOTIATION_IAC
+                elif not self.subnegotiation_overflowed:
+                    if (
+                        len(self.subnegotiation_data)
+                        >= self.maximum_subnegotiation_length
+                    ):
+                        self.subnegotiation_overflowed = True
+                        self.subnegotiation_data = bytearray()
+                    else:
+                        self.subnegotiation_data.append(byte)
                 continue
 
             if self.state == self.STATE_SUBNEGOTIATION_IAC:
                 if byte == SE:
+                    if not self.subnegotiation_overflowed:
+                        events.append(
+                            TelnetSubnegotiationEvent(
+                                self.subnegotiation_option,
+                                bytes(self.subnegotiation_data)
+                            )
+                        )
+                    self.subnegotiation_option = None
+                    self.subnegotiation_data = bytearray()
+                    self.subnegotiation_overflowed = False
                     self.state = self.STATE_DATA
+                elif byte == IAC:
+                    if not self.subnegotiation_overflowed:
+                        if (
+                            len(self.subnegotiation_data)
+                            >= self.maximum_subnegotiation_length
+                        ):
+                            self.subnegotiation_overflowed = True
+                            self.subnegotiation_data = bytearray()
+                        else:
+                            self.subnegotiation_data.append(IAC)
+                    self.state = self.STATE_SUBNEGOTIATION
                 else:
+                    self.subnegotiation_overflowed = True
+                    self.subnegotiation_data = bytearray()
                     self.state = self.STATE_SUBNEGOTIATION
                 continue
 
             if self.state == self.STATE_IAC:
                 if byte in (WILL, WONT, DO, DONT):
+                    self.pending_option_command = byte
                     self.state = self.STATE_OPTION
                 elif byte == SB:
-                    self.state = self.STATE_SUBNEGOTIATION
+                    self.state = self.STATE_SUBNEGOTIATION_OPTION
                 elif byte == IAC:
                     self.state = self.STATE_DATA
                     self._process_data_byte(byte, events)

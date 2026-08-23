@@ -3,9 +3,11 @@ import json
 import unittest
 
 import blingmud
+from gmcp import GMCP_OPTION
 from llm_fsm import AdvisoryFSMBehavior
 from core import COMMANDS, FSMBehavior, NPC, Player, Room
 from operational_log import OPS_LOG
+from telnet_parser import DO, TelnetNegotiationEvent, TelnetSubnegotiationEvent
 
 
 class RecordingRequest(object):
@@ -145,9 +147,23 @@ class AdminCommandTests(unittest.TestCase):
         self.assertEqual(handled, [])
 
     def test_heal_uses_shared_clamped_health_api(self):
+        self.target.handle_telnet_event(
+            TelnetNegotiationEvent(DO, GMCP_OPTION)
+        )
+        self.target.handle_telnet_event(
+            TelnetSubnegotiationEvent(
+                GMCP_OPTION,
+                b'Core.Supports.Set ["Char.Vitals 1"]'
+            )
+        )
+        self.target_request.sent = []
         self.target_player.health = 40
         COMMANDS["heal"].execute(self.admin, "Target 25")
         self.assertEqual(self.target_player.health, 65)
+        self.assertTrue(any(
+            b"Char.Vitals" in data
+            for data in self.target_request.sent
+        ))
         COMMANDS["heal"].execute(self.admin, "Target full")
         self.assertEqual(self.target_player.health, 100)
         COMMANDS["heal"].execute(self.admin, "Missing")

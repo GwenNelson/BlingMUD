@@ -9,6 +9,8 @@ from telnet_parser import (
     SB,
     SE,
     TabInputEvent,
+    TelnetNegotiationEvent,
+    TelnetSubnegotiationEvent,
     TelnetInputParser,
     TextInputEvent,
     WILL,
@@ -52,6 +54,15 @@ class TelnetInputParserTests(unittest.TestCase):
             events.extend(parser.feed(bytes((byte,))))
 
         self.assertEqual(lines(events), ["hello"])
+        negotiations = [
+            event
+            for event in events
+            if isinstance(event, TelnetNegotiationEvent)
+        ]
+        self.assertEqual(
+            [(event.command, event.option) for event in negotiations],
+            [(WILL, 1), (WONT, 2), (DO, 3), (DONT, 4)]
+        )
 
     def test_subnegotiation_is_ignored_until_fragmented_iac_se(self):
         parser = TelnetInputParser(20)
@@ -66,6 +77,32 @@ class TelnetInputParserTests(unittest.TestCase):
         for fragment in fragments:
             events.extend(parser.feed(fragment))
 
+        self.assertEqual(lines(events), ["visible"])
+        subnegotiations = [
+            event
+            for event in events
+            if isinstance(event, TelnetSubnegotiationEvent)
+        ]
+        self.assertEqual(len(subnegotiations), 1)
+        self.assertEqual(subnegotiations[0].option, 24)
+        self.assertEqual(
+            subnegotiations[0].data,
+            b"terminal-type" + bytes((IAC, 1, 2))
+        )
+
+    def test_subnegotiation_overflow_is_discarded_and_parser_recovers(self):
+        parser = TelnetInputParser(20, maximum_subnegotiation_length=4)
+        events = parser.feed(
+            bytes((IAC, SB, 201))
+            + b"12345"
+            + bytes((IAC, SE))
+            + b"visible\n"
+        )
+
+        self.assertFalse(any(
+            isinstance(event, TelnetSubnegotiationEvent)
+            for event in events
+        ))
         self.assertEqual(lines(events), ["visible"])
 
     def test_escaped_iac_is_data_not_a_telnet_command(self):

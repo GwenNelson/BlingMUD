@@ -19,6 +19,13 @@ import sys
 import threading
 import unicodedata
 
+from gmcp import (
+    GMCP_OPTION,
+    GmcpError,
+    GmcpProtocol,
+    NO_PAYLOAD,
+    encode_gmcp
+)
 from operational_log import log_event, log_exception
 from server_runtime import SelectorMudServer
 from persistence_runtime import (
@@ -36,6 +43,8 @@ from telnet_parser import (
     IAC,
     LineInputEvent,
     TabInputEvent,
+    TelnetNegotiationEvent,
+    TelnetSubnegotiationEvent,
     TelnetInputParser,
     TextInputEvent,
     WILL,
@@ -103,6 +112,19 @@ MAX_USERNAME_INPUT_LENGTH = 21
 
 TELOPT_ECHO = 1
 TELOPT_SGA = 3
+
+GMCP_DIRECTION_NAMES = {
+    "north": "n",
+    "south": "s",
+    "east": "e",
+    "west": "w",
+    "up": "u",
+    "down": "d",
+    "northeast": "ne",
+    "northwest": "nw",
+    "southeast": "se",
+    "southwest": "sw"
+}
 
 
 class DatabaseMigrationError(RuntimeError):
@@ -919,6 +941,7 @@ class HealCommand(Command):
                 healed
             )
         )
+        target.flush_gmcp()
         log_event(
             "admin.heal",
             actor=session.player.name,
@@ -1425,6 +1448,9 @@ class Session(object):
         self.last_save_receipt = None
         self.last_save_error = None
         self.input_parser = TelnetInputParser(MAX_INPUT_LENGTH)
+        self.gmcp = GmcpProtocol()
+        self.gmcp_cache = {}
+        self.gmcp_cache_lock = threading.RLock()
         self.monotonic_source = monotonic_source or time.monotonic
         self.wall_time_source = wall_time_source or time.time
         self.server_control = server_control
@@ -1467,7 +1493,12 @@ class Session(object):
                 old_intoxication - whole_minutes
             )
             self.player.mark_status_updated(self.wall_time_source())
-            return old_intoxication - self.player.intoxication
+            changed = old_intoxication - self.player.intoxication
+
+            if changed:
+                self.flush_gmcp()
+
+            return changed
         finally:
             self.state_lock.release()
 
@@ -1610,11 +1641,172 @@ class Session(object):
         negotiation = bytes((
             IAC, WILL, TELOPT_ECHO,
             IAC, WILL, TELOPT_SGA,
-            IAC, DONT, TELOPT_LINEMODE
+            IAC, DONT, TELOPT_LINEMODE,
+            IAC, WILL, GMCP_OPTION
         ))
 
         with self.send_lock:
             self.request.sendall(negotiation)
+
+    def send_gmcp(self, package, payload=NO_PAYLOAD):
+        """Send one negotiated GMCP message without disturbing the prompt."""
+        with self.gmcp.lock:
+            if not self.running or not self.gmcp.enabled:
+                return False
+
+        try:
+            data = encode_gmcp(package, payload)
+        except GmcpError:
+            return False
+
+        try:
+            with self.send_lock:
+                self.request.sendall(data)
+        except Exception:
+            self.running = False
+            return False
+
+        return True
+
+    def _gmcp_room_payload(self):
+        player = self.player
+
+        if player is None or player.room is None:
+            return None
+
+        room = player.room
+
+        if room.gmcp_id is None:
+            return None
+
+        with room.lock:
+            exits = {}
+
+            for direction, destination in room.exits.items():
+                if destination.gmcp_id is None:
+                    continue
+
+                wire_direction = GMCP_DIRECTION_NAMES.get(
+                    direction,
+                    direction
+                )
+                exits[wire_direction] = destination.gmcp_id
+
+            return {
+                "num": room.gmcp_id,
+                "id": room.room_id,
+                "name": room.name,
+                "area": room.gmcp_area,
+                "environment": room.gmcp_environment,
+                "exits": exits
+            }
+
+    def _gmcp_snapshots(self):
+        player = self.player
+
+        if player is None:
+            return ()
+
+        snapshots = []
+
+        if self.gmcp.supports("Char.Name"):
+            snapshots.append((
+                "Char.Name",
+                {"name": player.name, "fullname": player.name}
+            ))
+
+        if self.gmcp.supports("Char.Vitals"):
+            snapshots.append((
+                "Char.Vitals",
+                {
+                    "hp": player.health,
+                    "maxhp": player.max_health,
+                    "intoxication": player.intoxication
+                }
+            ))
+
+        if self.gmcp.supports("Char.StatusVars"):
+            snapshots.append((
+                "Char.StatusVars",
+                {
+                    "fabulousness": "Fabulousness",
+                    "coins": "Coins",
+                    "recently_respawned": "Recently collapsed"
+                }
+            ))
+
+        if self.gmcp.supports("Char.Status"):
+            snapshots.append((
+                "Char.Status",
+                {
+                    "fabulousness": player.fabulousness,
+                    "coins": player.coins,
+                    "recently_respawned": player.recently_respawned
+                }
+            ))
+
+        if self.gmcp.supports("Room.Info"):
+            room_payload = self._gmcp_room_payload()
+
+            if room_payload is not None:
+                snapshots.append(("Room.Info", room_payload))
+
+        return tuple(snapshots)
+
+    def flush_gmcp(self, force=False):
+        """Send subscribed state snapshots, suppressing unchanged values."""
+        if force:
+            with self.gmcp_cache_lock:
+                self.gmcp_cache = {}
+
+        sent = 0
+
+        for package, payload in self._gmcp_snapshots():
+            try:
+                encoded = encode_gmcp(package, payload)
+            except GmcpError:
+                continue
+
+            with self.gmcp_cache_lock:
+                if self.gmcp_cache.get(package) == encoded:
+                    continue
+
+            if not self.send_gmcp(package, payload):
+                break
+
+            with self.gmcp_cache_lock:
+                self.gmcp_cache[package] = encoded
+            sent += 1
+
+        return sent
+
+    def handle_telnet_event(self, event):
+        """Apply one Telnet protocol event on the session's serial path."""
+        if isinstance(event, TelnetNegotiationEvent):
+            action = self.gmcp.handle_negotiation(
+                event.command,
+                event.option,
+                DO,
+                DONT
+            )
+        elif isinstance(event, TelnetSubnegotiationEvent):
+            if event.option != GMCP_OPTION:
+                return False
+            action = self.gmcp.handle_message(event.data)
+        else:
+            return False
+
+        for package, payload in action.responses:
+            self.send_gmcp(package, payload)
+
+        if action.refresh:
+            with self.gmcp_cache_lock:
+                self.gmcp_cache = {}
+
+            if self.player is not None:
+                self.flush_gmcp(force=True)
+
+        return True
 
     def send_transport_warning(self):
         """Warn before authentication that Telnet has no encryption."""
@@ -1730,6 +1922,13 @@ class Session(object):
                     self.handle_tab_completion(line.text)
                     continue
 
+                if isinstance(
+                    line,
+                    (TelnetNegotiationEvent, TelnetSubnegotiationEvent)
+                ):
+                    self.handle_telnet_event(line)
+                    continue
+
                 break
 
             with self.send_lock:
@@ -1779,6 +1978,11 @@ class Session(object):
                             self.request.sendall(b"\b \b")
                 elif isinstance(event, TabInputEvent):
                     self.handle_tab_completion(event.text)
+                elif isinstance(
+                    event,
+                    (TelnetNegotiationEvent, TelnetSubnegotiationEvent)
+                ):
+                    self.handle_telnet_event(event)
                 elif isinstance(event, LineInputEvent):
                     with self.send_lock:
                         self.request.sendall(b"\r\n")
@@ -2161,6 +2365,8 @@ class Session(object):
             if player.health == 0:
                 self._collapse_player(cause)
 
+            self.flush_gmcp()
+
             return damage
 
     def _collapse_player(self, cause):
@@ -2356,6 +2562,7 @@ class Session(object):
             entry_room = self.login_room or self.world.starting_room
             entry_room.enter(self.player)
             entry_room.describe_to(self.player)
+            self.flush_gmcp(force=True)
 
         while self.running:
             self.prompt("> ")
@@ -2375,6 +2582,8 @@ class Session(object):
                     self.handle_command(line)
                 else:
                     self.handle_chat(line)
+
+                self.flush_gmcp()
 
     def disconnect(self):
         if not self.running and self.player is None:
@@ -2439,12 +2648,49 @@ class Session(object):
 class World(object):
     def __init__(self):
         self.rooms = {}
+        self.gmcp_rooms = {}
         self.starting_room = None
         self.village_state = VillageState()
         self.build()
 
-    def add_room(self, room):
+    def add_room(
+        self,
+        room,
+        gmcp_id,
+        gmcp_area="BlingMUD",
+        gmcp_environment="default"
+    ):
+        if room.room_id in self.rooms:
+            raise ValueError("duplicate room ID")
+
+        if isinstance(gmcp_id, bool) or not isinstance(gmcp_id, int):
+            raise TypeError("GMCP room ID must be an integer")
+
+        if gmcp_id <= 0:
+            raise ValueError("GMCP room ID must be positive")
+
+        if gmcp_id in self.gmcp_rooms:
+            raise ValueError("duplicate GMCP room ID")
+
+        if (
+            not isinstance(gmcp_area, str)
+            or not gmcp_area
+            or len(gmcp_area) > 128
+        ):
+            raise ValueError("GMCP room area must be non-empty text")
+
+        if (
+            not isinstance(gmcp_environment, str)
+            or not gmcp_environment
+            or len(gmcp_environment) > 128
+        ):
+            raise ValueError("GMCP room environment must be non-empty text")
+
+        room.gmcp_id = gmcp_id
+        room.gmcp_area = gmcp_area
+        room.gmcp_environment = gmcp_environment
         self.rooms[room.room_id] = room
+        self.gmcp_rooms[gmcp_id] = room
         return room
 
     def synchronize_persisted_state(self):
@@ -2459,23 +2705,24 @@ class World(object):
                 "reads: ORDINARY TEXT IS CHAT. COMMANDS BEGIN WITH /."
                 "\r\n\r\n"
                 "To the south lay the crossroads, where travellers may begin quests\r\n"
-            )
+            ),
+            1
         )
 
-        chamber = self.add_room(FabulousChamber())
+        chamber = self.add_room(FabulousChamber(), 2)
 
-        alley = self.add_room(SuspiciousAlley())
+        alley = self.add_room(SuspiciousAlley(), 3)
 
-        crossroads = self.add_room(Crossroads())
+        crossroads = self.add_room(Crossroads(), 4)
 
-        green = self.add_room(VillageGreen(self.village_state))
-        canopy = self.add_room(HangingTreeCanopy(self.village_state))
-        tavern = self.add_room(ValsHellaHoller(self.village_state))
-        turnery = self.add_room(CorbelsTurnery())
-        temple = self.add_room(TempleOfSelf())
-        smithy = self.add_room(Smithereens())
-        cottage = self.add_room(CeridwensCottage())
-        garden = self.add_room(OvergrownHerbGarden())
+        green = self.add_room(VillageGreen(self.village_state), 5)
+        canopy = self.add_room(HangingTreeCanopy(self.village_state), 6)
+        tavern = self.add_room(ValsHellaHoller(self.village_state), 7)
+        turnery = self.add_room(CorbelsTurnery(), 8)
+        temple = self.add_room(TempleOfSelf(), 9)
+        smithy = self.add_room(Smithereens(), 10)
+        cottage = self.add_room(CeridwensCottage(), 11)
+        garden = self.add_room(OvergrownHerbGarden(), 12)
 
         square.add_exit("north", chamber)
         chamber.add_exit("south", square)

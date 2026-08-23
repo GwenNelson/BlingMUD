@@ -118,6 +118,9 @@ class Room(object):
                 )
 
         self.room_id = room_id
+        self.gmcp_id = None
+        self.gmcp_area = None
+        self.gmcp_environment = None
         self.name = name
         self.description = description
         self.exits = {}

@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 
+from gmcp import GMCP_OPTION
 from operational_log import log_event, log_exception
 
 from telnet_parser import (
@@ -25,6 +26,8 @@ from telnet_parser import (
     IAC,
     LineInputEvent,
     TabInputEvent,
+    TelnetNegotiationEvent,
+    TelnetSubnegotiationEvent,
     TelnetInputParser,
     TextInputEvent,
     WILL,
@@ -544,6 +547,22 @@ class SelectorConnection(object):
         except queue.Full:
             self.request_close()
 
+    def _deliver_protocol(self, event):
+        if event.option != GMCP_OPTION:
+            return
+
+        if self.session is None:
+            return
+
+        if self.authenticated:
+            try:
+                self.input_lines.put_nowait(event)
+            except queue.Full:
+                self.request_close()
+            return
+
+        self.session.handle_telnet_event(event)
+
     def feed_received(self, data):
         """Process incremental Telnet and UTF-8 input events."""
         if not data or self.closed:
@@ -573,6 +592,11 @@ class SelectorConnection(object):
                 self._deliver_line(event.text)
             elif isinstance(event, TabInputEvent):
                 self._deliver_tab(event)
+            elif isinstance(
+                event,
+                (TelnetNegotiationEvent, TelnetSubnegotiationEvent)
+            ):
+                self._deliver_protocol(event)
 
     def idle_action(self, now):
         idle_for = max(0.0, now - self.last_input_at)
