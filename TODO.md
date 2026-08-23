@@ -73,7 +73,7 @@ NPCs
 ☒ Isolate every NPC behind one lazy bounded actor worker so a non-returning trusted callback selects inert fallback for only that NPC, cannot stall later recipients, and never causes replacement-thread leaks.
 ☒ Route Brave Sir Knight's existing FSM through the shared behavior contract without changing his intended behavior.
 ☒ Add validated, ordered speech/emote actions as structured behavior output.
-☐ Add reusable behavior implementations so a single NPC can be:
+☒ Add reusable behavior implementations so a single NPC can be:
   ☒ simple random chatter
   ☒ deterministic data-backed FSM
   ☒ FSM with optional LLM assistance
@@ -99,8 +99,8 @@ Admin / ops
 ☒ Extend admin inspection to bounded LLM runtime budgets, brain admission/mode health, and metadata-only NPC state counts; raw memory inspection remains intentionally excluded.
 ☒ Add commands to force wrapped NPC mode changes for debugging.
 ☒ Add bounded, control-safe JSON-lines operational logging for login/rate limits, connection and server lifecycle, character/world save/load, room-local triggers, NPC decisions/failures, and admin actions; redact secret-like fields and omit chat, prompts, command arguments, admin reason text, action text, serialized state, exception messages, and tracebacks.
-☐ Extend the same structured event contract to future LLM calls, budget decisions, circuit-breaker changes, health probes, and local fallback/recovery without ever logging provider keys or prompt/response content by default.
-☐ Add safe reload/debug tools where they do not risk player state.
+☒ Extend the same structured event contract to LLM advisory failures/catalogue refreshes, bounded budgets, and admin AI controls without logging provider keys or prompt/response content.
+☒ Add safe bounded AI inspection/mode/debug tools where they do not risk player state; template reload remains future work.
 
 Commands / UX
 
