@@ -113,7 +113,7 @@ Commands / UX
 ☒ Reject duplicate global primary names or aliases atomically instead of silently replacing a registered command.
 ☒ Add `/unequip <item or slot>` with `/remove` alias, preserving inventory and applying the item's unequip hook exactly once.
 ☐ Extend completion to safe argument candidates only where a future command explicitly declares a bounded provider.
-☐ Make room-local verbs and NPC-specific interactions easier to define.
+☒ Make room-local verbs and NPC-specific interactions easier to define through validated `Room.command_specs` and local `on_command` handlers.
 
 Village content
 
