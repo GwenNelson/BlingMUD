@@ -26,7 +26,7 @@ class CeridwenGardenTests(unittest.TestCase):
         cottage.leave(player, announce=False)
         garden.enter(player, announce=False)
         garden.on_command(session, "harvest", "weed")
-        self.assertIn("not yet safe", session.messages[-1])
+        self.assertIn("harvest one rare weed", session.messages[-1])
         garden.leave(player, announce=False)
 
 

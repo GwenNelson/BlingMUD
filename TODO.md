@@ -60,7 +60,7 @@ Core engine
 ☒ Give graceful shutdown one ten-second gameplay/persistence deadline and report workers or writes that do not finish instead of waiting indefinitely.
 ☒ Add persistent IDs and templates for rooms, items, and world objects where needed.
   ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat, royal possum bottle cap, giant acorn, Val's healing potion, Valkyrie mead, and horn-born special.
-  ☐ Register each future persistent item explicitly as its content patch lands; never deserialize arbitrary class names.
+☒ Register each future persistent item explicitly as its content patch lands; never deserialize arbitrary class names. Rare Weed is now an explicit whitelisted template.
 ☒ Add room-aware NPC activity snapshots and make the global manager skip detached and empty-room NPCs regardless of behavior type.
 ☒ Make ticker stop prompt and restartable, while refusing replacement if a previous ticker is still alive.
 ☒ Add no-listener selector integration tests for real readiness, fragmented Telnet input/output, hidden-password authentication through the bounded worker pool, graceful output drain, and fake-clock idle close; capability-skip only where the host explicitly denies local socketpair writes.
@@ -131,7 +131,7 @@ Village content
 ☐ Make canopy supply renewable across time without enabling unbounded item creation.
 ☒ Add Master Corbel's local-FSM turnery, fixed-price giant-acorn trade/crafting, persistent Acorn Goblets that Val can fill, bounded Acorn Mash food, persistent bounded coins, and the Green-to-Holler loop.
 ☐ Add the Smithereens, Eisele, and Tackdriver. (Initial bounded smithy room, Eisele FSM, scrap browse, and Tackdriver examine/listen/talk interactions are implemented; buying and commissions remain.)
-☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects. (Initial bounded cottage/garden rooms and Ceridwen FSM are implemented; item unlock and confusion mechanics remain.)
+☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects. (Rare Weed harvesting and bounded give-to-Ceridwen unlock are implemented; confusion mechanics remain.)
 ☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec. (Initial safe room, reflection, recovery, and Tome interactions are implemented; respec remains gated.)
 ☒ Add the non-verbal Wisp Mother with examine, one-hit protection, removal, prolonged darkness, recovery, and shared harm state.
 ☒ Make Val react to Wisp Mother harm through shared runtime state when the next player enters the tavern.

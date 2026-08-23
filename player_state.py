@@ -16,6 +16,7 @@ from items.giant_acorn import GiantAcorn
 from items.drinks import HornBornSpecial, ValHealingPotion, ValkyrieMead
 from items.drinks import AcornGoblet
 from items.food import AcornMash
+from items.herbs import RareWeed
 
 
 PLAYER_STATE_VERSION = 3
@@ -34,6 +35,7 @@ ITEM_FACTORIES = {
     "horn_born_special": HornBornSpecial
     ,"acorn_goblet": AcornGoblet
     ,"acorn_mash": AcornMash
+    ,"rare_weed": RareWeed
 }
 
 ITEM_TEMPLATE_IDS = {
@@ -45,6 +47,7 @@ ITEM_TEMPLATE_IDS = {
     HornBornSpecial: "horn_born_special"
     ,AcornGoblet: "acorn_goblet"
     ,AcornMash: "acorn_mash"
+    ,RareWeed: "rare_weed"
 }
 
 
