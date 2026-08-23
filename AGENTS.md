@@ -87,6 +87,7 @@ Project-specific guidance:
 - OpenRouter implementation is explicitly authorized. Preserve explicit enablement, free-only catalogue validation, bounded advisory workers, and exact local fallback; live provider unavailability is never permission to weaken these safeguards.
 - The OpenRouter transport must reject redirects, insecure key files, multimodal or unknown-priced models, oversized catalogues, and non-zero provider routing; its bounded advisory runtime may never execute remote text or actions directly.
 - Advisory provider work is globally and per-NPC/per-room budgeted, refreshed from selector maintenance without selector-thread network I/O, and must remain locally playable when every budget or model is exhausted.
+- Remote advisory responses are choice indices only; validated local candidate pools, FSM state, and gameplay side effects remain authoritative. Stale or late hints are discarded before the next actor decision.
 - Every LLM-capable NPC must have a complete FSM or simpler fallback, and tests must cover operation with no API key and no network.
 - Never hard-code, commit, prompt with, display, or ordinarily log provider API keys or other secrets.
 - Treat raised callback exceptions and non-returning callbacks as different failure modes: ordinary exceptions are reported while the actor remains usable; a deadline breach permanently selects inert fallback for that actor instance. Python cannot safely kill a stuck thread, so never create a replacement worker for an unresponsive actor or claim the stuck trusted code itself was terminated.

@@ -83,9 +83,9 @@ NPCs
 ☐ Make NPC memory structured and optional.
 ☒ Add local-authoritative fallback from advisory LLM work to the existing NPC behavior when the provider is unavailable or invalid.
 ☒ Make OpenRouter configuration optional and explicitly enabled by `BLINGMUD_OPENROUTER_ENABLED`; missing configuration starts with no AI runtime or key read.
-☐ Require every LLM-capable NPC to declare an FSM or simpler local fallback.
+☒ Require every LLM-capable NPC to declare an FSM or simpler local fallback, and constrain advisory responses to validated local choice indices.
 ☐ Test that the complete MUD remains playable with no API key, no network, exhausted AI budget, and sustained provider failure.
-☐ Keep API keys out of source control, prompts, admin output, and ordinary logs.
+☒ Keep API keys out of source control, prompts, admin output, and ordinary logs.
 ☒ Add OpenRouter support behind a free-only local adapter with catalogue validation, rotation, per-model cooldowns, bounded responses, redirect rejection, owner-only key validation, and circuit-breaker fallback.
 ☒ Add bounded global, room, and per-NPC advisory request budgets so low-priority NPCs stay on simpler behavior when capacity is exhausted.
 

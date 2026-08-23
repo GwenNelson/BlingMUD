@@ -1,6 +1,7 @@
 """Optional advisory wrapper: local NPC behaviour remains authoritative."""
 
 from core import NPCBehavior
+import threading
 
 
 class AdvisoryFSMBehavior(NPCBehavior):
@@ -13,7 +14,10 @@ class AdvisoryFSMBehavior(NPCBehavior):
     """
 
     mode = NPCBehavior.MODE_LLM_FSM
-    _LOCAL = frozenset(("fallback", "advisor", "advisory_failures", "advisory_calls", "npc"))
+    _LOCAL = frozenset((
+        "fallback", "advisor", "advisory_failures", "advisory_calls",
+        "npc", "_advisory_lock"
+    ))
 
     def __getattr__(self, name):
         fallback = self.__dict__.get("fallback")
@@ -36,6 +40,7 @@ class AdvisoryFSMBehavior(NPCBehavior):
         self.advisor = advisor
         self.advisory_failures = 0
         self.advisory_calls = 0
+        self._advisory_lock = threading.RLock()
 
     def bind(self, npc):
         NPCBehavior.bind(self, npc)
@@ -54,6 +59,11 @@ class AdvisoryFSMBehavior(NPCBehavior):
             return npc.room is room and bool(room.players)
 
     def _dispatch(self, method, *arguments):
+        reset_snapshot = getattr(
+            self.fallback, "reset_advisory_candidate_snapshot", None
+        )
+        if reset_snapshot is not None:
+            reset_snapshot()
         result = getattr(self.fallback, method)(*arguments)
         if self.advisor is None or not self._active():
             return result
@@ -66,6 +76,20 @@ class AdvisoryFSMBehavior(NPCBehavior):
         npc = self.npc
         room = npc.room
         snapshot = room.activity_snapshot()
+        candidate_snapshot = getattr(
+            self.fallback, "advisory_candidate_snapshot", lambda: None
+        )()
+        if isinstance(candidate_snapshot, dict):
+            candidate_id = candidate_snapshot.get("id")
+            candidate_actions = candidate_snapshot.get("actions", ())
+        else:
+            candidate_id = "local"
+            candidate_actions = actions
+        if (
+            getattr(self.advisor, "supports_callbacks", False)
+            and not candidate_actions
+        ):
+            return result
         frame = {
             "event": method,
             "npc": npc.name[:80],
@@ -75,19 +99,37 @@ class AdvisoryFSMBehavior(NPCBehavior):
             "visits": min(snapshot["visits"], 1000000),
             "interactions": min(snapshot["interactions"], 1000000),
             "candidates": [{
-                "choice": 0,
+                "id": str(candidate_id)[:80],
                 "actions": [
+                    {"type": action["type"], "text": action["text"][:1000]}
+                    if isinstance(action, dict) else
                     {"type": action.action_type, "text": action.text[:1000]}
-                    for action in actions[:8]
+                    for action in tuple(candidate_actions)[:8]
                 ]
             }]
         }
         try:
-            self.advisor.observe(frame)
+            if getattr(self.advisor, "supports_callbacks", False):
+                self.advisor.observe(frame, self._store_hint)
+            else:
+                self.advisor.observe(frame)
             self.advisory_calls += 1
         except Exception:
             self.advisory_failures += 1
         return result
+
+    def _store_hint(self, choice, frame):
+        if not self._active():
+            return
+        candidate = frame.get("candidates", ())
+        if not candidate:
+            return
+        candidate_id = candidate[0].get("id")
+        setter = getattr(self.fallback, "set_advisory_hint", None)
+        if setter is None:
+            return
+        with self._advisory_lock:
+            setter(frame.get("state"), candidate_id, choice)
 
     def on_player_enter(self, player):
         return self._dispatch("on_player_enter", player)

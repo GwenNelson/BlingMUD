@@ -1,4 +1,5 @@
 from core import FSMBehavior, NPC, NPCAction
+import hashlib
 import random
 import time
 import threading
@@ -68,6 +69,9 @@ class BraveSirKnightBehavior(FSMBehavior):
 
         self._last_emote = ""
         self._last_speech = ""
+        self._advisory_hint = None
+        self._last_advisory_snapshot = None
+        self._advisory_action_type = NPCAction.TYPE_SAY
 
         self.general_observations = (
             "looks along the road for signs of approaching travellers.",
@@ -325,7 +329,33 @@ class BraveSirKnightBehavior(FSMBehavior):
         )
 
     def _choose_not_last(self, choices, previous):
-        choice = random.choice(choices)
+        choices = tuple(choices)
+        fingerprint = hashlib.sha256(
+            (self._advisory_action_type + "\0" + "\0".join(choices)).encode(
+                "utf-8"
+            )
+        ).hexdigest()[:32]
+        self._last_advisory_snapshot = {
+            "id": fingerprint,
+            "actions": tuple(
+                {"type": self._advisory_action_type, "text": value}
+                for value in choices
+            )
+        }
+
+        choice = None
+        with self._state_lock:
+            hint = self._advisory_hint
+            if hint is not None and (
+                hint[0] == self.current_state and hint[1] == fingerprint
+            ):
+                self._advisory_hint = None
+                index = hint[2]
+                if isinstance(index, int) and 0 <= index < len(choices):
+                    choice = choices[index]
+
+        if choice is None:
+            choice = random.choice(choices)
 
         if choice == previous:
             alternatives = tuple(
@@ -339,7 +369,22 @@ class BraveSirKnightBehavior(FSMBehavior):
 
         return choice
 
+    def reset_advisory_candidate_snapshot(self):
+        self._last_advisory_snapshot = None
+
+    def advisory_candidate_snapshot(self):
+        return self._last_advisory_snapshot
+
+    def set_advisory_hint(self, state, candidate_id, choice):
+        if not isinstance(state, str) or not isinstance(candidate_id, str):
+            return
+        if isinstance(choice, bool) or not isinstance(choice, int):
+            return
+        with self._state_lock:
+            self._advisory_hint = (state, candidate_id[:80], choice)
+
     def _say_random(self, choices):
+        self._advisory_action_type = NPCAction.TYPE_SAY
         text = self._choose_not_last(
             choices,
             self._last_speech
@@ -349,6 +394,7 @@ class BraveSirKnightBehavior(FSMBehavior):
         self.speak(text)
 
     def _emote_random(self, choices):
+        self._advisory_action_type = NPCAction.TYPE_EMOTE
         text = self._choose_not_last(
             choices,
             self._last_emote

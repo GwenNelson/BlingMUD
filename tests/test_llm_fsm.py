@@ -14,6 +14,44 @@ class Advisor(object):
     def observe(self, frame): self.frames.append(frame)
 
 
+class CallbackAdvisor(object):
+    supports_callbacks = True
+
+    def __init__(self): self.frames = []
+
+    def observe(self, frame, callback):
+        self.frames.append(frame)
+        callback(1, frame)
+
+
+class CandidateFallback(Fallback):
+    def __init__(self):
+        super().__init__()
+        self.hint = None
+        self.snapshot = None
+
+    def reset_advisory_candidate_snapshot(self):
+        self.snapshot = None
+
+    def advisory_candidate_snapshot(self):
+        return self.snapshot
+
+    def set_advisory_hint(self, state, candidate_id, choice):
+        self.hint = (candidate_id, choice)
+
+    def on_say(self, player, text):
+        choice = 0 if self.hint is None else self.hint[1]
+        self.hint = None
+        self.snapshot = {
+            "id": "candidate",
+            "actions": (
+                {"type": "say", "text": "local reply"},
+                {"type": "say", "text": "advised reply"}
+            )
+        }
+        return NPCAction.say(("local reply", "advised reply")[choice])
+
+
 class AdvisoryFSMTests(unittest.TestCase):
     def test_local_result_is_unchanged_and_cold_rooms_make_no_advisory_call(self):
         advisor = Advisor()
@@ -27,6 +65,21 @@ class AdvisoryFSMTests(unittest.TestCase):
         room.enter(player, announce=False)
         self.assertEqual(len(advisor.frames), 1)
         self.assertEqual(behavior.on_say(player, "hello").text, "local reply")
+        self.assertEqual(len(advisor.frames), 2)
+        room.leave(player, announce=False)
+        room.remove_npc(npc)
+
+    def test_valid_choice_is_consumed_only_by_a_later_local_decision(self):
+        advisor = CallbackAdvisor()
+        behavior = AdvisoryFSMBehavior(CandidateFallback(), advisor)
+        npc = NPC("Test", "test", behavior=behavior)
+        room = Room("test", "Test", "test")
+        room.add_npc(npc)
+        player = Player("Player")
+        room.enter(player, announce=False)
+
+        self.assertEqual(behavior.on_say(player, "hello").text, "local reply")
+        self.assertEqual(behavior.on_say(player, "hello").text, "advised reply")
         self.assertEqual(len(advisor.frames), 2)
         room.leave(player, announce=False)
         room.remove_npc(npc)

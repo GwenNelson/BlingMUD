@@ -11,6 +11,7 @@ from operational_log import log_event
 
 
 class NPCAdvisorRuntime(object):
+    supports_callbacks = True
     def __init__(
         self, provider, workers=2, queued=16, time_source=None,
         global_limit=120, npc_limit=30, room_limit=60
@@ -51,7 +52,7 @@ class NPCAdvisorRuntime(object):
             worker.start()
         self.worker = self.workers[0]
 
-    def observe(self, frame):
+    def observe(self, frame, result_handler=None):
         if not isinstance(frame, dict) or len(frame) > 8:
             raise ValueError("invalid advisory frame")
         with self.lock:
@@ -70,7 +71,12 @@ class NPCAdvisorRuntime(object):
                 raise ValueError("advisory frame is too large")
             with self.lock:
                 self.sequence += 1
-                item = (-self.priority_score(frame), self.sequence, frame)
+                item = (
+                    -self.priority_score(frame),
+                    self.sequence,
+                    frame,
+                    result_handler
+                )
             self.queue.put_nowait(item)
         except queue.Full:
             with self.queue.mutex:
@@ -150,7 +156,7 @@ class NPCAdvisorRuntime(object):
     def _run(self):
         while True:
             try:
-                unused_priority, unused_sequence, frame = self.queue.get(
+                unused_priority, unused_sequence, frame, result_handler = self.queue.get(
                     timeout=0.1
                 )
             except queue.Empty:
@@ -176,8 +182,17 @@ class NPCAdvisorRuntime(object):
                     ], max_tokens=16)
                     if response is not None:
                         parsed = json.loads(response)
-                        if parsed != {"choice": 0}:
+                        if (
+                            not isinstance(parsed, dict)
+                            or set(parsed) != {"choice"}
+                            or isinstance(parsed["choice"], bool)
+                            or not isinstance(parsed["choice"], int)
+                            or parsed["choice"] < 0
+                            or parsed["choice"] >= len(frame.get("candidates", ()))
+                        ):
                             raise ValueError("invalid advisory choice")
+                        if result_handler is not None:
+                            result_handler(parsed["choice"], frame)
             except Exception:
                 with self.lock:
                     self.invalid_responses += 1

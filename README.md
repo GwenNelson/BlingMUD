@@ -78,7 +78,7 @@ Admin privilege is never persisted in character state. Admin reasons are shown t
 
 ### NPC and failure model
 
-Rooms with no players receive no global NPC heartbeat. Active NPCs decide through one lazy finite-mailbox actor each; one stuck callback makes only that actor inert and never creates a replacement worker. Brave Sir Knight and Val use local FSM behavior, and the possum uses a simple local state machine. Optional OpenRouter advisory work is explicitly disabled unless `BLINGMUD_OPENROUTER_ENABLED` is set, uses only validated free text models, is bounded globally and per active room/NPC, and never replaces local NPC authority. The complete game remains playable without AI configuration or network access beyond its Telnet listener.
+Rooms with no players receive no global NPC heartbeat. Active NPCs decide through one lazy finite-mailbox actor each; one stuck callback makes only that actor inert and never creates a replacement worker. Brave Sir Knight and Val use local FSM behavior, and the possum uses a simple local state machine. Optional OpenRouter advisory work is explicitly disabled unless `BLINGMUD_OPENROUTER_ENABLED` is set, uses only validated free text models, is bounded globally and per active room/NPC, and can influence only a later choice among local validated candidates. It never replaces local NPC authority. The complete game remains playable without AI configuration or network access beyond its Telnet listener.
 
 ### Tests
 
