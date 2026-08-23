@@ -136,6 +136,7 @@ Village content
 ☒ Add Master Corbel's local-FSM turnery, fixed-price giant-acorn trade/crafting, persistent Acorn Goblets that Val can fill, bounded Acorn Mash food, persistent bounded coins, and the Green-to-Holler loop.
 ☒ Register diagonal movement commands and aliases so advertised northeast/northwest/southeast/southwest exits are directly traversable.
 ☒ Guarantee bare `/look` and `/l` show the full room and all exits in every room, while preserving targeted room-local look behavior such as the Temple mirror.
+☒ Add an all-room user-expectation audit for reachability, reciprocal/direct exits, complete look output, claimed command aliases, and representative valid feature dispatch.
 ☐ Add the Smithereens, Eisele, and Tackdriver. (Initial bounded smithy room, Eisele FSM, scrap browse, and Tackdriver examine/listen/talk interactions are implemented; buying and commissions remain.)
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects. (Rare Weed harvesting and bounded runtime-local give-to-Ceridwen experimental stock are implemented; durable unlock and confusion mechanics remain.)
 ☒ Make Ceridwen's advertised `/give weed` command return bounded syntax feedback for missing or invalid targets instead of falling through as unknown.
