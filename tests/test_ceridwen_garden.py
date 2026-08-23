@@ -1,8 +1,11 @@
 import unittest
 
+import blingmud
 from core import Player
 from rooms.ceridwens_cottage import CeridwensCottage
 from rooms.overgrown_herb_garden import OvergrownHerbGarden
+from items.herbs import RareWeed
+from player_state import restore_player_state, serialize_player_state
 
 
 class Session(object):
@@ -35,6 +38,15 @@ class CeridwenGardenTests(unittest.TestCase):
         cottage.on_command(session, "buy", "experimental")
         self.assertIn("experimental potion", session.messages[-1])
         garden.leave(player, announce=False)
+
+    def test_rare_weed_round_trips_through_explicit_player_template(self):
+        player = Player("SavedHerbalist")
+        player.inventory.append(RareWeed())
+        encoded = serialize_player_state(player)
+        restored = Player("RestoredHerbalist")
+        restore_player_state(restored, encoded, blingmud.World())
+        self.assertEqual(len(restored.inventory), 1)
+        self.assertIsInstance(restored.inventory[0], RareWeed)
 
 
 if __name__ == "__main__":
