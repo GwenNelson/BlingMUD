@@ -11,6 +11,7 @@ from core import (
     find_command_spec,
     register_command
 )
+from rooms.temple_of_self import TempleOfSelf
 
 
 class RecordingRequest(object):
@@ -81,16 +82,20 @@ class CommandDispatchTests(unittest.TestCase):
     def transcript(self):
         return b"".join(self.request.sent).decode("utf-8", "replace")
 
-    def test_room_primary_and_alias_override_global_commands(self):
+    def test_bare_look_is_global_but_targeted_look_remains_room_local(self):
         self.session.handle_command("/look")
+        self.session.handle_command("/l")
         self.session.handle_command("/l target")
 
         self.assertEqual(
             self.room.calls,
-            [("look", ""), ("l", "target")]
+            [("l", "target")]
         )
-        self.assertEqual(self.transcript().count("Room-specific look."), 2)
-        self.assertNotIn("Global description", self.transcript())
+        self.assertEqual(self.transcript().count("Room-specific look."), 1)
+        self.assertEqual(self.transcript().count("Global description"), 2)
+        self.assertEqual(
+            self.transcript().count("There are no obvious exits."), 2
+        )
 
     def test_reserved_admin_command_bypasses_room_and_checks_privilege(self):
         self.session.handle_command("/shutdown 30 maintenance")
@@ -139,6 +144,23 @@ class CommandDispatchTests(unittest.TestCase):
             "southeast", "se", "southwest", "sw"
         ):
             self.assertIn(name, COMMANDS)
+
+    def test_temple_bare_look_always_shows_its_advertised_exit(self):
+        temple = TempleOfSelf()
+        outside = Room("outside", "Outside", "Outside the Temple.")
+        temple.add_exit("north", outside)
+        self.room.leave(self.player, announce=False)
+        temple.enter(self.player, announce=False)
+        try:
+            self.session.handle_command("/look")
+            transcript = self.transcript()
+            self.assertIn("The Temple of the Self", transcript)
+            self.assertIn("Exits:", transcript)
+            self.assertIn("north", transcript)
+            self.assertNotIn("The Temple offers a mirror", transcript)
+        finally:
+            temple.leave(self.player, announce=False)
+            self.room.enter(self.player, announce=False)
 
     def test_duplicate_primary_name_is_rejected_without_mutation(self):
         original = COMMANDS["look"]

@@ -6,7 +6,7 @@ class TempleOfSelf(Room):
 
     command_specs = (
         CommandSpec("examine", "/examine <mirror|water|book>", "Examine the Temple's reflective objects.", aliases=("inspect",)),
-        CommandSpec("look", "/look mirror", "Look into the Temple mirror."),
+        CommandSpec("look", "/look [mirror]", "Look around or into the Temple mirror."),
         CommandSpec("sit", "/sit", "Sit quietly in the Temple."),
         CommandSpec("meditate", "/meditate", "Recover a small amount of health."),
         CommandSpec("read", "/read book", "Read the Tome of Indulgence."),
@@ -26,6 +26,8 @@ class TempleOfSelf(Room):
 
     def on_command(self, session, command, arguments):
         target = arguments.strip().lower()
+        if command == "look" and not target:
+            return False
         if command in ("examine", "inspect", "look"):
             if target in ("mirror", "water", "the mirror", "the water", "examine water"):
                 session.send(

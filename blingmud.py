@@ -2244,8 +2244,16 @@ class Session(object):
             arguments = ""
 
         room = self.player.room
+        bare_room_look = (
+            command_name in ("look", "l")
+            and not arguments.strip()
+        )
 
-        if command_name not in RESERVED_GLOBAL_COMMANDS and room is not None:
+        if (
+            command_name not in RESERVED_GLOBAL_COMMANDS
+            and not bare_room_look
+            and room is not None
+        ):
             if room.on_command(
                 self,
                 command_name,

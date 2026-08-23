@@ -40,6 +40,10 @@ class TempleTests(unittest.TestCase):
         self.assertIn("health", self.transcript())
         self.assertIn("Tome of Indulgence", self.transcript())
 
+    def test_bare_room_look_is_left_to_the_global_renderer(self):
+        self.assertFalse(self.room.on_command(self.session, "look", ""))
+        self.assertEqual(self.transcript(), "")
+
     def test_meditation_uses_shared_health_api(self):
         self.player.health = 40
         self.room.on_command(self.session, "meditate", "")
