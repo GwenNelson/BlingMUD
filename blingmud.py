@@ -1283,6 +1283,34 @@ class TellCommand(Command):
         session.send("You tell {0}: {1}".format(target.player.name, message))
 
 
+@register_command
+class HugCommand(Command):
+    name = "hug"
+    aliases = ()
+    usage = "/hug <person>"
+    summary = "Offer a bounded, consensual room-local hug."
+
+    def execute(self, session, arguments):
+        wanted = arguments.strip().lower()
+        if not wanted:
+            session.send("Hug whom?")
+            return
+        room = session.player.room
+        target = None
+        with room.lock:
+            for candidate in room.players:
+                if candidate.name.lower() == wanted:
+                    target = candidate
+                    break
+        if target is None:
+            session.send("That person is not here.")
+            return
+        if target is session.player:
+            session.send("You give yourself a dignified, logistical hug.")
+            return
+        room.broadcast("* {0} hugs {1}.".format(session.player.name, target.name))
+
+
 
 @register_command
 class WorshipCommand(Command):

@@ -47,6 +47,7 @@ Project-specific guidance:
 - Keep random/content selection algorithms bounded. Never use retry-until-different loops for NPC output; one-entry pools and deterministic test sources must complete safely.
 - Player speech and emotes reach NPCs through the room notification methods; preserve that delivery path when changing chat or command handling.
 - `/tell` is a bounded private fallback command: resolve recipients through canonical active-session indexing, reject control characters and empty/oversized messages, and never log message text.
+- `/hug` is a bounded room-local player interaction; resolve only current room players under the room lock and never allow cross-room targeting.
 - The global `NPCManager` is the authoritative heartbeat gate: it must tick only registered NPCs that are still present in a room with at least one player. Keep direct enter/say/emote reactions immediate, reject stale-player room events, and do not move cold-room checks back into only selected behavior implementations.
 - Preserve room lifecycle idempotence: duplicate enter/leave calls must not emit duplicate NPC events, successful leave must clear `player.room`, and activity counters should advance only for actual visits and interactions.
 - A timed-out ticker stop must never be followed by a replacement thread while the previous ticker remains alive. Restart is allowed only after the old thread has actually stopped; do not solve stuck callbacks by leaking replacement threads.

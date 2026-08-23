@@ -290,6 +290,13 @@ class AdminCommandTests(unittest.TestCase):
         self.assertEqual(before, len(self.target_request.sent))
         self.assertIn("too long", self.transcript(self.admin_request))
 
+    def test_hug_is_limited_to_players_in_the_current_room(self):
+        COMMANDS["hug"].execute(self.admin, "target")
+        self.assertIn("Administrator hugs Target", self.transcript(self.admin_request))
+        self.target_player.room.leave(self.target_player, announce=False)
+        COMMANDS["hug"].execute(self.admin, "target")
+        self.assertIn("not here", self.transcript(self.admin_request))
+
 
 if __name__ == "__main__":
     unittest.main()

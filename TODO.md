@@ -105,7 +105,7 @@ Admin / ops
 Commands / UX
 
 ☒ Implement or improve `/tell` with bounded, control-safe private delivery.
-☐ Implement or improve `/hug`.
+☒ Implement or improve `/hug` as a bounded room-local player interaction.
 ☐ Implement or improve `/flirt`.
 ☒ Add validated global and room-local command specs, generate list/detail help from live availability, and drive bounded command-token completion from Tab events.
 ☒ Canonicalize exact aliases and unique prefixes, filter admin-only candidates, and use expected-text compare-and-replace so delayed completion cannot overwrite newer input.
