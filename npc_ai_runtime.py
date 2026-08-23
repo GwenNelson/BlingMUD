@@ -276,17 +276,24 @@ class NPCAdvisorRuntime(object):
                             raise ValueError("invalid advisory reply")
                     else:
                         reply = None
+                    if result_handler is not None:
+                        accepted = result_handler(choice, frame, reply)
+                        if accepted is False:
+                            raise ValueError("advisory response was stale")
                     with self.lock:
                         self.valid_responses += 1
                         self.ready_npcs.add(str(frame.get("npc", ""))[:80])
                         self.llm_ready = bool(self.ready_npcs)
-                    if result_handler is not None:
-                        result_handler(choice, frame, reply)
             except Exception:
                 with self.lock:
                     self.invalid_responses += 1
                     self.ready_npcs.discard(str(frame.get("npc", ""))[:80])
                     self.llm_ready = bool(self.ready_npcs)
+                if result_handler is not None:
+                    try:
+                        result_handler(None, frame, None)
+                    except Exception:
+                        pass
                 log_event(
                     "npc_ai.advisory_failure",
                     provider_status=getattr(self.provider, "status", "unknown")

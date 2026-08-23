@@ -31,6 +31,33 @@ class ReplyAdvisor(CallbackAdvisor):
         callback(0, frame, "A remote but bounded reply.")
 
 
+class FailureAdvisor(CallbackAdvisor):
+    llm_ready = True
+    def observe(self, frame, callback):
+        self.frames.append(frame)
+        callback(None, frame, None)
+        return True
+
+
+class RejectingAdvisor(CallbackAdvisor):
+    llm_ready = True
+    def observe(self, frame, callback):
+        self.frames.append(frame)
+        return False
+
+
+class SilentAdvisor(CallbackAdvisor):
+    llm_ready = True
+    def __init__(self):
+        super().__init__()
+        self.now = 10.0
+        self.time_source = lambda: self.now
+
+    def observe(self, frame, callback):
+        self.frames.append(frame)
+        return True
+
+
 class CandidateFallback(Fallback):
     def __init__(self):
         super().__init__()
@@ -98,10 +125,61 @@ class AdvisoryFSMTests(unittest.TestCase):
         room.add_npc(npc)
         player = Player("Player")
         room.enter(player, announce=False)
-        behavior.on_say(player, "hello")
+        self.assertEqual(behavior.on_say(player, "hello"), ())
         actions = behavior.tick()
-        self.assertEqual(actions[-1].text, "A remote but bounded reply.")
+        self.assertEqual(
+            tuple(action.text for action in actions),
+            ("A remote but bounded reply.",)
+        )
         self.assertEqual(behavior.mode, NPCBehavior.MODE_LLM_FSM)
+        room.leave(player, announce=False)
+        room.remove_npc(npc)
+
+    def test_live_llm_failure_releases_exact_local_speech_on_next_tick(self):
+        behavior = AdvisoryFSMBehavior(CandidateFallback(), FailureAdvisor())
+        npc = NPC("Test", "test", behavior=behavior)
+        room = Room("test", "Test", "test")
+        room.add_npc(npc)
+        player = Player("Player")
+        room.enter(player, announce=False)
+        self.assertEqual(behavior.on_say(player, "hello"), ())
+        actions = behavior.tick()
+        self.assertEqual(tuple(action.text for action in actions), ("local reply",))
+        room.leave(player, announce=False)
+        room.remove_npc(npc)
+
+    def test_live_llm_admission_rejection_returns_local_speech_immediately(self):
+        behavior = AdvisoryFSMBehavior(CandidateFallback(), RejectingAdvisor())
+        npc = NPC("Test", "test", behavior=behavior)
+        room = Room("test", "Test", "test")
+        room.add_npc(npc)
+        player = Player("Player")
+        room.enter(player, announce=False)
+        self.assertEqual(
+            behavior.on_say(player, "hello").text,
+            "local reply"
+        )
+        self.assertEqual(behavior.tick(), None)
+        room.leave(player, announce=False)
+        room.remove_npc(npc)
+
+    def test_live_llm_deadline_discards_late_reply_and_releases_fallback(self):
+        advisor = SilentAdvisor()
+        behavior = AdvisoryFSMBehavior(CandidateFallback(), advisor)
+        npc = NPC("Test", "test", behavior=behavior)
+        room = Room("test", "Test", "test")
+        room.add_npc(npc)
+        player = Player("Player")
+        room.enter(player, announce=False)
+        self.assertEqual(behavior.on_say(player, "hello"), ())
+        self.assertEqual(behavior.tick(), None)
+        advisor.now += 5.0
+        actions = behavior.tick()
+        self.assertEqual(tuple(action.text for action in actions), ("local reply",))
+        self.assertFalse(
+            behavior._store_hint(0, advisor.frames[0], "Too late.")
+        )
+        self.assertEqual(behavior.tick(), None)
         room.leave(player, announce=False)
         room.remove_npc(npc)
 

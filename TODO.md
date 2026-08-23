@@ -85,7 +85,7 @@ NPCs
 ☒ Preserve wrapper-owned fallback bindings during NPC behavior installation and replacement.
 ☒ Make OpenRouter configuration optional and explicitly enabled by `BLINGMUD_OPENROUTER_ENABLED`; missing configuration starts with no AI runtime or key read.
 ☒ Require every LLM-capable NPC to declare an FSM or simpler local fallback, and constrain advisory responses to validated local choice indices.
-☒ Test that the complete MUD remains playable with no API key or network; local-world coverage passes. Knight chat now has an immediate local response even when advisory work is unavailable. Exhausted-budget and sustained-provider-failure paths remain covered by focused runtime tests and should receive a broader gameplay scenario later.
+☒ Test that the complete MUD remains playable with no API key or network; local-world coverage passes. Startup and unavailable-provider Knight chat use the local response. Established LLM speech suppresses canned output, with exact fallback on admission rejection, provider failure, or a five-second deadline and stale-response rejection.
 ☒ Keep API keys out of source control, prompts, admin output, and ordinary logs.
 ☒ Add OpenRouter support behind a bounded paid-first adapter with catalogue validation, a hard one-dollar daily reservation cap, free-model fallback, rotation, per-model cooldowns, bounded responses, redirect rejection, owner-only key validation, and circuit-breaker fallback.
 ☒ Fix paid routing price units, prefer a reliable inexpensive instruction model, persist the UTC-day budget, and prove a real Knight query reaches `llm_fsm` only after a validated response.

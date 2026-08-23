@@ -4,6 +4,10 @@ from core import NPCBehavior
 from core import NPCAction
 from collections import deque
 import threading
+import time
+
+
+LLM_SPEECH_FALLBACK_SECONDS = 5.0
 
 
 class AdvisoryFSMBehavior(NPCBehavior):
@@ -16,7 +20,8 @@ class AdvisoryFSMBehavior(NPCBehavior):
 
     _LOCAL = frozenset((
         "fallback", "advisor", "advisory_failures", "advisory_calls",
-        "npc", "_advisory_lock", "local_only", "_pending_replies",
+        "npc", "_advisory_lock", "local_only", "_pending_outputs",
+        "_pending_speech", "_next_request_id", "_time_source",
         "_conversation"
     ))
 
@@ -43,7 +48,10 @@ class AdvisoryFSMBehavior(NPCBehavior):
         self.advisory_calls = 0
         self._advisory_lock = threading.RLock()
         self.local_only = False
-        self._pending_replies = deque(maxlen=4)
+        self._pending_outputs = deque(maxlen=8)
+        self._pending_speech = {}
+        self._next_request_id = 0
+        self._time_source = getattr(advisor, "time_source", time.monotonic)
         self._conversation = deque(maxlen=3)
 
     @property
@@ -80,6 +88,10 @@ class AdvisoryFSMBehavior(NPCBehavior):
             return npc.room is room and bool(room.players)
 
     def _dispatch(self, method, *arguments):
+        live_speech = (
+            method == "on_say"
+            and self.mode == NPCBehavior.MODE_LLM_FSM
+        )
         reset_snapshot = getattr(
             self.fallback, "reset_advisory_candidate_snapshot", None
         )
@@ -88,12 +100,25 @@ class AdvisoryFSMBehavior(NPCBehavior):
         result = getattr(self.fallback, method)(*arguments)
         if method == "tick":
             with self._advisory_lock:
-                reply = self._pending_replies.popleft() if self._pending_replies else None
-            if reply is not None and self._active():
+                now = self._time_source()
+                release_all = self.mode != NPCBehavior.MODE_LLM_FSM
+                expired = [
+                    request_id
+                    for request_id, pending in self._pending_speech.items()
+                    if release_all or pending["deadline"] <= now
+                ]
+                for request_id in expired:
+                    pending = self._pending_speech.pop(request_id)
+                    self._pending_outputs.append(pending["fallback"])
+                outputs = tuple(self._pending_outputs)
+                self._pending_outputs.clear()
+            if outputs and self._active():
                 existing = () if result is None else (
                     tuple(result) if isinstance(result, (tuple, list)) else (result,)
                 )
-                result = existing + (NPCAction.say(reply),)
+                result = existing + tuple(
+                    action for output in outputs for action in output
+                )
         if self.local_only or self.advisor is None or not self._active():
             return result
         if method not in ("on_say", "on_emote", "on_player_enter"):
@@ -152,14 +177,38 @@ class AdvisoryFSMBehavior(NPCBehavior):
                 history = tuple(dict(item) for item in self._conversation)
             if history:
                 frame["history"] = history
+        request_id = None
+        if live_speech:
+            with self._advisory_lock:
+                if len(self._pending_speech) >= 4:
+                    return result
+                self._next_request_id += 1
+                request_id = self._next_request_id
+                frame["request_id"] = request_id
+                self._pending_speech[request_id] = {
+                    "deadline": self._time_source()
+                    + LLM_SPEECH_FALLBACK_SECONDS,
+                    "fallback": actions
+                }
         try:
             if getattr(self.advisor, "supports_callbacks", False):
-                self.advisor.observe(frame, self._store_hint)
+                admitted = self.advisor.observe(frame, self._store_hint)
             else:
-                self.advisor.observe(frame)
+                admitted = self.advisor.observe(frame)
             self.advisory_calls += 1
         except Exception:
             self.advisory_failures += 1
+            if request_id is not None:
+                with self._advisory_lock:
+                    self._pending_speech.pop(request_id, None)
+            return result
+        if admitted is False:
+            if request_id is not None:
+                with self._advisory_lock:
+                    self._pending_speech.pop(request_id, None)
+            return result
+        if live_speech:
+            return ()
         return result
 
     def set_local_only(self, enabled=True):
@@ -168,25 +217,41 @@ class AdvisoryFSMBehavior(NPCBehavior):
         return self.local_only
 
     def _store_hint(self, choice, frame, reply=None):
+        request_id = frame.get("request_id")
         if not self._active():
-            return
+            if request_id is not None:
+                with self._advisory_lock:
+                    self._pending_speech.pop(request_id, None)
+            return False
+        if choice is None:
+            if request_id is not None:
+                with self._advisory_lock:
+                    pending = self._pending_speech.pop(request_id, None)
+                    if pending is not None:
+                        self._pending_outputs.append(pending["fallback"])
+            return True
         candidate = frame.get("candidates", ())
         if not candidate:
-            return
+            return False
         candidate_id = candidate[0].get("id")
         setter = getattr(self.fallback, "set_advisory_hint", None)
         if setter is None and not reply:
-            return
+            return False
         with self._advisory_lock:
+            if request_id is not None:
+                pending = self._pending_speech.pop(request_id, None)
+                if pending is None:
+                    return False
             if setter is not None:
                 setter(frame.get("state"), candidate_id, choice)
             if frame.get("event") == "on_say" and reply:
-                self._pending_replies.append(reply)
+                self._pending_outputs.append((NPCAction.say(reply),))
                 self._conversation.append({
                     "speaker": str(frame.get("speaker", "traveller"))[:80],
                     "input": str(frame.get("input", ""))[:500],
                     "reply": reply[:240]
                 })
+        return True
 
     def on_player_enter(self, player):
         return self._dispatch("on_player_enter", player)

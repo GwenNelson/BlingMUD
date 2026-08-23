@@ -108,5 +108,27 @@ class RuntimeTests(unittest.TestCase):
         finally:
             self.assertTrue(runtime.shutdown())
 
+    def test_provider_failure_notifies_callback_and_keeps_fsm_mode(self):
+        runtime = NPCAdvisorRuntime(Provider(), workers=1, queued=2)
+        completed = threading.Event()
+        received = []
+        frame = {
+            "event": "on_say", "npc": "Knight", "room": "crossroads",
+            "candidates": [{"id": "a", "actions": [{"type": "say", "text": "Local."}]}]
+        }
+        try:
+            self.assertTrue(runtime.observe(
+                frame,
+                lambda choice, original, reply: (
+                    received.append((choice, reply)), completed.set()
+                )
+            ))
+            self.assertTrue(completed.wait(1.0))
+            self.assertEqual(received, [(None, None)])
+            self.assertFalse(runtime.status_snapshot()["llm_ready"])
+            self.assertFalse(runtime.is_ready("Knight"))
+        finally:
+            self.assertTrue(runtime.shutdown())
+
 
 if __name__ == "__main__": unittest.main()
