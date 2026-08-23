@@ -50,5 +50,17 @@ class RuntimeTests(unittest.TestCase):
             provider.release.set()
             self.assertTrue(runtime.shutdown())
 
+    def test_budget_rejects_excessive_per_npc_work(self):
+        runtime = NPCAdvisorRuntime(
+            Provider(), workers=1, queued=2, npc_limit=1
+        )
+        try:
+            frame = {"event": "tick", "npc": "Knight", "room": "crossroads"}
+            self.assertTrue(runtime.observe(frame))
+            self.assertFalse(runtime.observe(frame))
+            self.assertEqual(runtime.status_snapshot()["budget_rejections"], 1)
+        finally:
+            self.assertTrue(runtime.shutdown())
+
 
 if __name__ == "__main__": unittest.main()

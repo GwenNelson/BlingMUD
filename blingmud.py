@@ -2964,6 +2964,8 @@ def main():
     server.add_maintenance_callback(STATUS_COORDINATOR.tick)
     server.add_maintenance_callback(WORLD_SAVE_COORDINATOR.tick)
     server.add_maintenance_callback(AUTOSAVE_COORDINATOR.tick)
+    if AI_RUNTIME is not None:
+        server.add_maintenance_callback(AI_RUNTIME.maintenance)
 
     try:
         server.bind()

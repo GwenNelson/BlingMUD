@@ -11,7 +11,7 @@ def configure_world_ai(world, environ=None, directory=".", provider=None):
     if enabled not in ("1", "true", "yes"):
         return None
     provider = provider or OpenRouterProvider(directory)
-    runtime = NPCAdvisorRuntime(provider)
+    runtime = NPCAdvisorRuntime(provider, workers=2, queued=16)
     runtime.refresh_catalogue()
     for room_id, attribute in (
         ("crossroads", "knight"),

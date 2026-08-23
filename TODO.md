@@ -87,7 +87,7 @@ NPCs
 ☐ Test that the complete MUD remains playable with no API key, no network, exhausted AI budget, and sustained provider failure.
 ☐ Keep API keys out of source control, prompts, admin output, and ordinary logs.
 ☒ Add OpenRouter support behind a free-only local adapter with catalogue validation, rotation, per-model cooldowns, bounded responses, redirect rejection, owner-only key validation, and circuit-breaker fallback.
-☐ Add token/budget gating so low-priority NPCs stay on simpler behavior.
+☒ Add bounded global, room, and per-NPC advisory request budgets so low-priority NPCs stay on simpler behavior when capacity is exhausted.
 
 OpenRouter implementation is explicitly authorized. Live catalogue refresh has been verified with the local provider; live completion may still exhaust the currently advertised free pool and must fall back locally.
 
