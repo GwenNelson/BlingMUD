@@ -479,6 +479,34 @@ class BraveSirKnightBehavior(FSMBehavior):
         self._last_emote = text
         self.emote(text)
 
+    def on_say(self, player, text):
+        """Give a bounded immediate reply; advisory choice affects a later reply."""
+        if not self.npc or not self.room or not self._room_has_players():
+            return ()
+        lowered = (text or "").lower()
+        if any(word in lowered for word in ("hello", "hail", "greet")):
+            choices = (
+                "Greetings, traveller. The crossroads are safe while I stand watch.",
+                "Well met. Tell me what news you carry from the roads.",
+                "Hail and welcome. Keep your courage and your boots serviceable."
+            )
+        elif any(word in lowered for word in ("water", "thirst", "drink")):
+            choices = (
+                "The well is clear, and every traveller may draw from it.",
+                "Take water before the road takes more from you than expected.",
+                "A full bucket is a small kindness with excellent reach."
+            )
+        else:
+            choices = (
+                "I hear you. The road rewards patience and a watchful eye.",
+                "That is worth considering beneath an open sky.",
+                "Speak plainly and I shall answer as plainly as honour permits."
+            )
+        self._advisory_action_type = NPCAction.TYPE_SAY
+        choice = self._choose_not_last(choices, self._last_speech)
+        self._last_speech = choice
+        return (NPCAction.say(choice),)
+
     def _is_lady_gwen(self, name):
         return name.strip().lower() in (
             "gwen",
