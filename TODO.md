@@ -132,7 +132,7 @@ Village content
 ☒ Add Master Corbel's local-FSM turnery, fixed-price giant-acorn trade/crafting, persistent Acorn Goblets that Val can fill, bounded Acorn Mash food, persistent bounded coins, and the Green-to-Holler loop.
 ☐ Add the Smithereens, Eisele, and Tackdriver.
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects.
-☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec.
+☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec. (Initial safe room, reflection, recovery, and Tome interactions are implemented; respec remains gated.)
 ☒ Add the non-verbal Wisp Mother with examine, one-hit protection, removal, prolonged darkness, recovery, and shared harm state.
 ☒ Make Val react to Wisp Mother harm through shared runtime state when the next player enters the tavern.
 ☐ Make the remaining villagers react to the now-durable Wisp Mother harm consequence.
