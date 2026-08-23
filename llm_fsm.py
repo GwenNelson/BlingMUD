@@ -16,7 +16,7 @@ class AdvisoryFSMBehavior(NPCBehavior):
     mode = NPCBehavior.MODE_LLM_FSM
     _LOCAL = frozenset((
         "fallback", "advisor", "advisory_failures", "advisory_calls",
-        "npc", "_advisory_lock"
+        "npc", "_advisory_lock", "local_only"
     ))
 
     def __getattr__(self, name):
@@ -41,6 +41,7 @@ class AdvisoryFSMBehavior(NPCBehavior):
         self.advisory_failures = 0
         self.advisory_calls = 0
         self._advisory_lock = threading.RLock()
+        self.local_only = False
 
     def bind(self, npc):
         NPCBehavior.bind(self, npc)
@@ -65,7 +66,7 @@ class AdvisoryFSMBehavior(NPCBehavior):
         if reset_snapshot is not None:
             reset_snapshot()
         result = getattr(self.fallback, method)(*arguments)
-        if self.advisor is None or not self._active():
+        if self.local_only or self.advisor is None or not self._active():
             return result
         if result is None:
             actions = ()
@@ -117,6 +118,11 @@ class AdvisoryFSMBehavior(NPCBehavior):
         except Exception:
             self.advisory_failures += 1
         return result
+
+    def set_local_only(self, enabled=True):
+        """Force the wrapped FSM to remain local without changing its state."""
+        self.local_only = bool(enabled)
+        return self.local_only
 
     def _store_hint(self, choice, frame):
         if not self._active():

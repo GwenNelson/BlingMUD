@@ -205,6 +205,14 @@ class OpenRouterProvider(object):
             self.status = "temporarily_exhausted"
             return None
 
+    def clear_circuit(self):
+        with self.lock:
+            self.cooldowns.clear()
+            if self.models:
+                self.status = "healthy"
+            elif self.status in ("circuit_open", "temporarily_exhausted"):
+                self.status = "no_free_models"
+
     def complete(self, messages, max_tokens=120):
         if not isinstance(messages, list) or not 1 <= len(messages) <= 8:
             raise ValueError("messages must be a bounded non-empty list")

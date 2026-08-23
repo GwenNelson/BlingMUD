@@ -1075,8 +1075,9 @@ class AdminStatusCommand(Command):
                 session.send("npc_ai: disabled_by_config")
             else:
                 session.send("npc_ai: provider={0}".format(AI_RUNTIME.provider.status))
-                session.send("npc_ai_runtime: {0}".format(AI_RUNTIME.status_snapshot()))
+            session.send("npc_ai_runtime: {0}".format(AI_RUNTIME.status_snapshot()))
             return
+
 
         connections = (
             session.server_control.connection_snapshot()
@@ -1140,6 +1141,77 @@ class AdminStatusCommand(Command):
                     AI_RUNTIME.status_snapshot()
                 )
             )
+
+
+@register_command
+class AdminAICommand(Command):
+    name = "adminai"
+    aliases = ()
+    usage = "/adminai [status|refresh|clear|enable|disable|npc <knight|val> <local|advisory>]"
+    summary = "Inspect or control bounded optional NPC advisory AI."
+    admin_only = True
+
+    @staticmethod
+    def _npc_behavior(session, name):
+        room = getattr(session.world, "rooms", {}).get(
+            "crossroads" if name == "knight" else "vals_hella_holler"
+        )
+        attribute = "knight" if name == "knight" else "val"
+        return None if room is None else getattr(room, attribute, None)
+
+    def execute(self, session, arguments):
+        parts = arguments.split()
+        operation = parts[0].lower() if parts else "status"
+        if operation == "status":
+            if AI_RUNTIME is None:
+                session.send("npc_ai: disabled_by_config")
+            else:
+                session.send("npc_ai: provider={0} runtime={1}".format(
+                    AI_RUNTIME.provider.status, AI_RUNTIME.status_snapshot()))
+            return
+        if AI_RUNTIME is None:
+            session.send("npc_ai: disabled_by_config")
+            return
+        if operation == "disable" and len(parts) == 1:
+            AI_RUNTIME.set_enabled(False)
+            session.send("npc_ai: disabled")
+            log_event("admin.ai", actor=session.player.name, operation="disable")
+            return
+        if operation == "enable" and len(parts) == 1:
+            if getattr(AI_RUNTIME.provider, "status", "key_missing") == "key_missing":
+                session.send("npc_ai: key_missing")
+                return
+            AI_RUNTIME.set_enabled(True)
+            session.send("npc_ai: enabled")
+            log_event("admin.ai", actor=session.player.name, operation="enable")
+            return
+        if operation == "clear" and len(parts) == 1:
+            AI_RUNTIME.clear_circuit()
+            session.send("npc_ai: circuit_cleared")
+            log_event("admin.ai", actor=session.player.name, operation="clear")
+            return
+        if operation == "refresh" and len(parts) == 1:
+            queued = AI_RUNTIME.refresh_catalogue()
+            session.send("npc_ai: refresh_{0}".format("queued" if queued else "rejected"))
+            log_event("admin.ai", actor=session.player.name, operation="refresh", queued=bool(queued))
+            return
+        if (
+            operation == "npc" and len(parts) == 3
+            and parts[1].lower() in ("knight", "val")
+            and parts[2].lower() in ("local", "advisory")
+        ):
+            npc = self._npc_behavior(session, parts[1].lower())
+            behavior = None if npc is None else npc.behavior
+            setter = getattr(behavior, "set_local_only", None)
+            if setter is None:
+                session.send("npc_ai: npc_unavailable")
+                return
+            local_only = parts[2].lower() == "local"
+            setter(local_only)
+            session.send("npc_ai: {0} mode={1}".format(parts[1].lower(), parts[2].lower()))
+            log_event("admin.ai", actor=session.player.name, operation="npc_mode", npc=parts[1].lower(), mode=parts[2].lower())
+            return
+        session.send("Usage: {0}".format(self.usage))
 
 
 @register_command

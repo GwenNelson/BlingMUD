@@ -203,6 +203,39 @@ class AdminCommandTests(unittest.TestCase):
         self.assertNotIn("prompt", transcript.lower())
         self.assertNotIn("key", transcript.lower())
 
+    def test_adminai_controls_runtime_without_exposing_provider_data(self):
+        class Provider(object):
+            status = "healthy"
+            def clear_circuit(self):
+                self.cleared = True
+
+        class Runtime(object):
+            def __init__(self):
+                self.provider = Provider()
+                self.enabled = True
+            def status_snapshot(self):
+                return {"enabled": self.enabled, "queued": 0}
+            def set_enabled(self, value):
+                self.enabled = bool(value)
+                return self.enabled
+            def clear_circuit(self):
+                self.provider.clear_circuit()
+            def refresh_catalogue(self):
+                return True
+
+        runtime = Runtime()
+        blingmud.AI_RUNTIME = runtime
+        COMMANDS["adminai"].execute(self.admin, "disable")
+        self.assertFalse(runtime.enabled)
+        COMMANDS["adminai"].execute(self.admin, "enable")
+        self.assertTrue(runtime.enabled)
+        COMMANDS["adminai"].execute(self.admin, "clear")
+        self.assertTrue(runtime.provider.cleared)
+        transcript = self.transcript(self.admin_request)
+        self.assertIn("disabled", transcript)
+        self.assertIn("enabled", transcript)
+        self.assertNotIn("key", transcript.lower())
+
     def test_admin_log_records_action_without_reason_text(self):
         sink = io.StringIO()
         original_sink = OPS_LOG.sink

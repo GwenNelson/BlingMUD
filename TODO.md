@@ -95,6 +95,7 @@ Admin / ops
 
 ☒ Add admin-only `/shutdown now`, `/kick`, `/heal`, `/save`, and `/adminstatus`, with confirmation/bounds, graceful output draining, shared health/save paths, and non-admin help/completion filtering.
 ☒ Add bounded `/adminstatus rooms` and `/adminstatus npcs` views for activity, behavior mode, actor fallback, queues, and errors.
+☒ Add bounded admin-only `/adminai` status, refresh, circuit-clear, enable/disable, and per-NPC local/advisory controls.
 ☐ Extend admin inspection to future structured NPC memory, LLM budgets, and brain health after those systems exist.
 ☐ Add commands to force NPC mode changes for debugging.
 ☒ Add bounded, control-safe JSON-lines operational logging for login/rate limits, connection and server lifecycle, character/world save/load, room-local triggers, NPC decisions/failures, and admin actions; redact secret-like fields and omit chat, prompts, command arguments, admin reason text, action text, serialized state, exception messages, and tracebacks.
@@ -108,7 +109,7 @@ Commands / UX
 ☐ Implement or improve `/flirt`.
 ☒ Add validated global and room-local command specs, generate list/detail help from live availability, and drive bounded command-token completion from Tab events.
 ☒ Canonicalize exact aliases and unique prefixes, filter admin-only candidates, and use expected-text compare-and-replace so delayed completion cannot overwrite newer input.
-☒ Dispatch ordinary room commands before globals, but reserve `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `quit`, and `exit` so rooms can never intercept them.
+☒ Dispatch ordinary room commands before globals, but reserve `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `adminai`, `quit`, and `exit` so rooms can never intercept them.
 ☒ Reject duplicate global primary names or aliases atomically instead of silently replacing a registered command.
 ☒ Add `/unequip <item or slot>` with `/remove` alias, preserving inventory and applying the item's unequip hook exactly once.
 ☐ Extend completion to safe argument candidates only where a future command explicitly declares a bounded provider.

@@ -119,7 +119,7 @@ Connection and session runtime
 - [done: event primitive] Tab produces a bounded `TabInputEvent` carrying the current input instead of terminating the line, and `Session` receives it on its sequential worker for command-aware handling.
 - [done: command specifications] Every registered global command now validates its name, aliases, slash-prefixed usage and non-empty summary at import. The Alley, canopy, Green and Holler expose equivalent `Room.command_specs`, and `/help` list/detail output is generated from specs visible to the current player.
 - [done: command completion] Tab completion operates only on the initial slash-command token, hides admin-only specs from non-admins, canonicalizes exact aliases, completes unique names, extends a common canonical prefix, or lists finite candidates. Parser replacement checks the exact text that generated Tab before mutating, so delayed events cannot overwrite newer input. Argument completion remains deliberately unimplemented.
-- [done: dispatch precedence] Ordinary `Room.on_command` handlers run before global fallbacks, including room aliases, and room specs take matching help/completion precedence. The reserved names `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `quit`, and `exit` bypass rooms even if room code tries to claim them.
+- [done: dispatch precedence] Ordinary `Room.on_command` handlers run before global fallbacks, including room aliases, and room specs take matching help/completion precedence. The reserved names `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `adminai`, `quit`, and `exit` bypass rooms even if room code tries to claim them.
 - [done: registry safety] Global registration validates complete metadata and checks every normalized primary name/alias before mutating `COMMANDS`; any collision raises and leaves the registry unchanged.
 - [done: equipment UX] `/unequip <item or slot>` and its `/remove` alias resolve a case-insensitive slot before an equipped item name, apply the item's trusted unequip hook once, delete the equipment mapping, preserve inventory membership, notify the player, and broadcast the removal.
 - [done: no-listener integration] Real selector readiness is covered with unnamed local socket pairs for fragmented Telnet read/echo, hidden-password selector authentication through the actual bounded pool, output-draining graceful shutdown, and fake-clock idle closure. Tests have finite pumps and teardown, never call `bind()`/`serve_forever()`/`main()`, and capability-skip only when a host explicitly denies local socketpair writes.
@@ -128,7 +128,7 @@ Admin and operational tooling
 
 - [done: core operations] `/shutdown now [reason]` requires explicit confirmation, announces to active sessions, closes the listener, allows up to one second to drain queued output, then reaches the existing ten-second gameplay/final-character/final-world shutdown path. `/kick <player> [reason]` refuses self-kick, announces before output-preserving close, and leaves saving to normal disconnect. Reasons are 200-character/control-safe text.
 - [done: bounded intervention] `/heal [player] [amount|full]` acquires the target state lock for at most one second and uses `Player.heal`; `/save [player|all|world]` can wait up to two seconds for a focused save while `all` queues character/world snapshots non-blockingly. Waiting session saves now bound state-lock acquisition as well as writer completion.
-- [done: current inspection] `/adminstatus` shows bounded connection/session/schema/NPC/persistence/status counters; `rooms` lists at most 20 room activity records and `npcs` lists at most 20 NPC room/mode/fallback/queue/error records. Admin output contains no auth material or provider secrets, and all five commands are hidden from non-admin help/completion.
+- [done: current inspection] `/adminstatus` shows bounded connection/session/schema/NPC/persistence/status counters; `rooms` lists at most 20 room activity records and `npcs` lists at most 20 NPC room/mode/fallback/queue/error records. `/adminai` adds bounded provider status, refresh, cooldown-clear, runtime admission, and wrapped-NPC local/advisory controls. Admin output contains no auth material or provider secrets, and all six admin commands are hidden from non-admin help/completion.
 - Add admin inspection for structured NPC memory, current LLM budget use, and brain health when those systems exist.
 - Add a way to force an NPC between random, FSM, and LLM modes for debugging.
 - Add commands to reload NPC definitions and content without restarting the server.
@@ -481,7 +481,7 @@ Implementation order
 - Phase 1: [done] fix the concrete engine/security bugs, deliver versioned player persistence through version 2, save/load on login and disconnect, and add bounded dirty-only periodic autosave.
 - Phase 2: [done] the generic behavior system, Brave Sir Knight migration, room activity metrics, global empty-room heartbeat suspension, and bounded per-NPC callback isolation are complete.
 - Phase 3: add OpenRouter integration, circuit breaker failover, structured JSON output, and priority budgeting for LLM-capable NPCs.
-- Phase 4: [partly done] core shutdown/kick/heal/save/status, room/NPC actor inspection, and bounded local operational logging are implemented; future NPC mode, LLM health/budget, memory, safe-reset, and reload controls remain.
+- Phase 4: [implemented slice] core shutdown/kick/heal/save/status, room/NPC actor inspection, bounded local operational logging, and bounded `/adminai` mode/admission/circuit controls are implemented; template reload and richer memory inspection remain.
 - Phase 5: implement the village content as data-driven rooms, NPCs, items, room triggers, and status effects.
 - Phase 6: add tests and regression coverage for the new architecture and the email-driven gameplay.
 
@@ -820,7 +820,7 @@ What exists vs what is still planned
   - [done] bounded per-NPC isolation and inert fallback for a trusted callback that never returns
   - OpenRouter integration and LLM failover, deferred until explicitly re-authorized by the user
   - budgeted NPC priority system
-  - advanced admin NPC-memory/LLM-budget/brain-health/mode/reload controls; core shutdown/kick/heal/save/status and room/NPC actor inspection are implemented
+  - advanced admin NPC-memory/LLM-budget/brain-health/template-reload controls; core shutdown/kick/heal/save/status, room/NPC actor inspection, and bounded `/adminai` mode/admission/circuit controls are implemented
   - the remaining email-driven village content, including Corbel's acorn economy, Val's food/prices/regular memory and richer horn output, remaining Wisp reactions, and durable shared world state
   - broader data-driven room/NPC event schemas for authoring; operational room-trigger and NPC-decision metadata is implemented
   - content data loading / world authoring layer

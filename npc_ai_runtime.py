@@ -35,6 +35,7 @@ class NPCAdvisorRuntime(object):
         self.last_catalogue_request = None
         self.queue = queue.PriorityQueue(maxsize=queued)
         self.closed = False
+        self.enabled = True
         self.lock = threading.RLock()
         self.submitted = 0
         self.dropped = 0
@@ -56,7 +57,7 @@ class NPCAdvisorRuntime(object):
         if not isinstance(frame, dict) or len(frame) > 8:
             raise ValueError("invalid advisory frame")
         with self.lock:
-            if self.closed:
+            if self.closed or not self.enabled:
                 self.dropped += 1
                 return False
             if not self._budget_available(frame):
@@ -102,6 +103,22 @@ class NPCAdvisorRuntime(object):
                 self.dropped += 1
             return False
         with self.lock: self.submitted += 1
+        return True
+
+    def set_enabled(self, enabled):
+        with self.lock:
+            if self.closed and enabled:
+                return False
+            self.enabled = bool(enabled)
+            return self.enabled
+
+    def clear_circuit(self):
+        clearer = getattr(self.provider, "clear_circuit", None)
+        if clearer is not None:
+            clearer()
+        with self.lock:
+            self.budget_rejections = 0
+            self.last_catalogue_request = None
         return True
 
     def _budget_available(self, frame):
@@ -217,6 +234,7 @@ class NPCAdvisorRuntime(object):
                     worker.is_alive() for worker in self.workers
                 ),
                 "closed": self.closed
+                ,"enabled": self.enabled
             }
 
     def shutdown(self, timeout=1.0):

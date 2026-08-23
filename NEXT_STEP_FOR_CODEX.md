@@ -341,6 +341,11 @@
   - force an NPC back to local FSM mode;
   - save or inspect bounded NPC state.
 
+  Implemented slice: `/adminai` now provides bounded status, catalogue-refresh
+  admission, provider cooldown clearing, runtime enable/disable, and explicit
+  local/advisory mode for the wrapped Knight and Val. Template reload and
+  richer memory/brain inspection remain intentionally planned.
+
   Admin output must show identifiers, counters, and status names only. It must never show API keys, raw prompts, full player text, or sensitive exception details.
 
   Persist only necessary NPC state:
