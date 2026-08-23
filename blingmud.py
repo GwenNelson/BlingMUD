@@ -956,14 +956,14 @@ class SaveCommand(Command):
 class AdminStatusCommand(Command):
     name = "adminstatus"
     aliases = ()
-    usage = "/adminstatus [rooms|npcs]"
+    usage = "/adminstatus [rooms|npcs|ai]"
     summary = "Inspect bounded server, persistence, room, and NPC status."
     admin_only = True
 
     def execute(self, session, arguments):
         wanted = arguments.strip().lower()
 
-        if wanted not in ("", "rooms", "npcs"):
+        if wanted not in ("", "rooms", "npcs", "ai"):
             session.send("Usage: {0}".format(self.usage))
             return
 
@@ -1014,6 +1014,14 @@ class AdminStatusCommand(Command):
 
             if len(npcs) > 20:
                 session.send("{0} additional NPCs omitted.".format(len(npcs) - 20))
+            return
+
+        if wanted == "ai":
+            if AI_RUNTIME is None:
+                session.send("npc_ai: disabled_by_config")
+            else:
+                session.send("npc_ai: provider={0}".format(AI_RUNTIME.provider.status))
+                session.send("npc_ai_runtime: {0}".format(AI_RUNTIME.status_snapshot()))
             return
 
         connections = (

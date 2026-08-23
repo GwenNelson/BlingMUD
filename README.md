@@ -26,7 +26,7 @@ Input passes through one shared incremental Telnet/UTF-8 parser in both selector
 
 Global and room-local commands declare validated usage, aliases and summaries through `CommandSpec`. `/help` is generated from the commands actually available to the player, and `/help <command or alias>` shows focused help. Pressing Tab while typing the slash-command token canonicalizes an exact alias, completes a unique command, extends a shared prefix, or lists the finite matching command names. Compare-and-replace prevents a delayed Tab event from overwriting newer typing; arguments are deliberately not completed yet.
 
-Ordinary room-local commands override a global command of the same name or alias, allowing a location to give a verb special meaning. Safety and administrative names always bypass rooms: `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `quit`, and `exit`. Global command registration rejects duplicate primary names or aliases atomically instead of silently replacing an existing command.
+Ordinary room-local commands override a global command of the same name or alias, allowing a location to give a verb special meaning. Safety and administrative names always bypass rooms: `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `adminai`, `quit`, and `exit`. Global command registration rejects duplicate primary names or aliases atomically instead of silently replacing an existing command.
 
 Equipment can be removed with `/unequip <item or slot>` or `/remove <item or slot>`. The item stays in inventory, its `on_unequip()` effect runs once, and room occupants see the removal.
 
@@ -60,7 +60,7 @@ For an orderly stop, authenticate with `/admin` and use `/shutdown now [reason]`
 
 ### Persistent files and backups
 
-`users.sqlite` is resolved to an absolute path at startup and contains accounts, password hashes, character JSON, and the single shared village-state row. `admin.hash` contains only the session-admin password hash. Both are ignored by Git. `openrouter.key`, if created for a future optional provider, is also ignored and must contain only the raw local key. Character state is strict version-3 JSON, including bounded coins and only whitelisted Goblet contents; village state is strict version-1 JSON; account storage is schema version 3 with canonical username-key repair; startup applies known SQLite and character migrations and refuses an unknown newer database schema.
+`users.sqlite` is resolved to an absolute path at startup and contains accounts, password hashes, character JSON, and the single shared village-state row. `admin.hash` contains only the session-admin password hash. Both are ignored by Git. `openrouter.key` is ignored, must contain only the raw local key, and must be owner-readable only. Character state is strict version-3 JSON, including bounded coins and only whitelisted Goblet contents; village state is strict version-1 JSON; account storage is schema version 3 with canonical username-key repair; startup applies known SQLite and character migrations and refuses an unknown newer database schema.
 
 Use `/save all` or `/shutdown now`, wait for completion, and copy `users.sqlite` while BlingMUD is stopped. A raw file copy during an active SQLite transaction is not the documented backup path. Keep `admin.hash` private, and do not hand-edit serialized JSON unless you are prepared for validation to reject it and restore safe defaults.
 
@@ -72,13 +72,13 @@ After `/admin`, the implemented session-only commands are:
 - `/kick <player> [reason]` — announce and disconnect through normal save cleanup.
 - `/heal [player] [amount|full]` — use the shared bounded health rules.
 - `/save [player|all|world]` — request a focused or nonblocking bulk save.
-- `/adminstatus [rooms|npcs]` — show bounded runtime, activity, persistence, and NPC-actor diagnostics.
+- `/adminstatus [rooms|npcs|ai]` — show bounded runtime, activity, persistence, NPC-actor, and optional AI diagnostics.
 
 Admin privilege is never persisted in character state. Admin reasons are shown to affected players but operational logs record only whether a reason was supplied.
 
 ### NPC and failure model
 
-Rooms with no players receive no global NPC heartbeat. Active NPCs decide through one lazy finite-mailbox actor each; one stuck callback makes only that actor inert and never creates a replacement worker. Brave Sir Knight and Val use local FSM behavior, and the possum uses a simple local state machine. There is currently no OpenRouter client, LLM call, provider key, or remote-AI dependency in the codebase: the complete game runs locally without AI configuration or network access beyond its Telnet listener.
+Rooms with no players receive no global NPC heartbeat. Active NPCs decide through one lazy finite-mailbox actor each; one stuck callback makes only that actor inert and never creates a replacement worker. Brave Sir Knight and Val use local FSM behavior, and the possum uses a simple local state machine. Optional OpenRouter advisory work is explicitly disabled unless `BLINGMUD_OPENROUTER_ENABLED` is set, uses only validated free text models, and never replaces local NPC authority. The complete game remains playable without AI configuration or network access beyond its Telnet listener.
 
 ### Tests
 

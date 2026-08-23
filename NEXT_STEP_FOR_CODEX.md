@@ -109,7 +109,7 @@
 
   ## Phase 2: Generic LLM/FSM architecture — implemented foundation
 
-  `AdvisoryFSMBehavior` wraps an existing behavior without replacing its state or output, emits a bounded one-candidate structured frame only in occupied rooms, and delegates every failure to the exact local result. Explicitly enabled worlds wrap Brave Sir Knight and Val; disabled worlds construct no runtime and do not read the key.
+  `AdvisoryFSMBehavior` wraps an existing behavior without replacing its state or output, emits a bounded structured frame only in occupied rooms, and delegates every failure to the exact local result. Explicitly enabled worlds wrap Brave Sir Knight and Val; disabled worlds construct no runtime and do not read the key. The current provider transport rejects redirects and insecure key files, validates the live catalogue within a bounded 2 MiB response, and accepts only free text models with the parameters required by its JSON-only request.
 
   ### Core adapter
 
@@ -390,7 +390,7 @@
   - Catalogue refresh updates the pool safely.
   - Recovery after cooldown restores provider use.
   - No paid request is ever generated.
-  - No real OpenRouter calls occur in the test suite.
+  - No real OpenRouter calls occur in the test suite; a separate authorized synthetic probe may validate the live catalogue and free-pool fallback without player data.
 
   ### Scheduling tests
 

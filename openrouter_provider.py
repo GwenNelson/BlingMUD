@@ -2,6 +2,7 @@
 
 import json
 import os
+import stat
 import threading
 import time
 import urllib.error
@@ -12,17 +13,34 @@ KEY_FILENAME = "openrouter.key"
 MODELS_URL = "https://openrouter.ai/api/v1/models"
 CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 MAX_KEY_BYTES = 512
-MAX_RESPONSE_BYTES = 262144
+MAX_CATALOGUE_BYTES = 2 * 1024 * 1024
+MAX_CHAT_RESPONSE_BYTES = 65536
+MAX_MODELS = 128
 REQUEST_TIMEOUT_SECONDS = 5.0
 MODEL_COOLDOWN_SECONDS = 60.0
 PRICING_FIELDS = frozenset((
-    "prompt", "completion", "request", "image", "web_search",
-    "internal_reasoning", "input_cache_read", "input_cache_write"
+    "prompt", "completion", "request", "image", "image_output",
+    "audio", "audio_output", "web_search", "internal_reasoning",
+    "input_audio_cache", "input_cache_read", "input_cache_write",
+    "input_cache_write_1h"
 ))
+CATALOGUE_URLS = frozenset((MODELS_URL, CHAT_URL))
 
 
 class ProviderError(RuntimeError):
     pass
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, *arguments, **keywords):
+        raise urllib.error.HTTPError(
+            request.full_url, 310, "redirects are disabled", None, None
+        )
+
+
+def _default_opener(request, timeout):
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    return opener.open(request, timeout=timeout)
 
 
 class OpenRouterProvider(object):
@@ -30,7 +48,7 @@ class OpenRouterProvider(object):
 
     def __init__(self, directory=".", opener=None, time_source=None):
         self.directory = os.path.abspath(directory)
-        self.opener = opener or urllib.request.urlopen
+        self.opener = opener or _default_opener
         self.time_source = time_source or time.monotonic
         self.lock = threading.RLock()
         self.models = []
@@ -42,7 +60,20 @@ class OpenRouterProvider(object):
     def _load_key(self):
         filename = os.path.join(self.directory, KEY_FILENAME)
         try:
-            with open(filename, "rb") as handle:
+            flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(filename, flags)
+            metadata = os.fstat(descriptor)
+            owner = getattr(os, "geteuid", lambda: metadata.st_uid)()
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != owner
+                or metadata.st_mode & 0o077
+            ):
+                os.close(descriptor)
+                self.status = "key_missing"
+                return None
+            with os.fdopen(descriptor, "rb") as handle:
                 value = handle.read(MAX_KEY_BYTES + 1)
         except OSError:
             self.status = "key_missing"
@@ -78,9 +109,9 @@ class OpenRouterProvider(object):
         pricing = model.get("pricing")
         if not isinstance(architecture, dict) or not isinstance(pricing, dict):
             return False
-        if "text" not in architecture.get("input_modalities", ()):
+        if tuple(architecture.get("input_modalities", ())) != ("text",):
             return False
-        if "text" not in architecture.get("output_modalities", ()):
+        if tuple(architecture.get("output_modalities", ())) != ("text",):
             return False
         if (
             not isinstance(model.get("context_length"), int)
@@ -89,24 +120,57 @@ class OpenRouterProvider(object):
             return False
         if not pricing or set(pricing) - PRICING_FIELDS:
             return False
+        supported = model.get("supported_parameters")
+        if not isinstance(supported, list):
+            return False
+        if not {
+            "max_tokens", "temperature", "response_format"
+        }.issubset(supported):
+            return False
         return all(cls._is_zero_price(value) for value in pricing.values())
 
     def _request_json(self, url, payload=None):
+        if url not in CATALOGUE_URLS:
+            raise ProviderError("catalogue_unavailable")
         key = self._load_key()
         if key is None:
             raise ProviderError(self.status)
         data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
-        request = urllib.request.Request(url, data=data, headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": "Bearer " + key,
+                "Accept": "application/json",
+                "Content-Type": "application/json"
+            }
+        )
         try:
             response = self.opener(request, timeout=REQUEST_TIMEOUT_SECONDS)
             try:
-                data = response.read(MAX_RESPONSE_BYTES + 1)
+                maximum = (
+                    MAX_CATALOGUE_BYTES
+                    if payload is None else MAX_CHAT_RESPONSE_BYTES
+                )
+                data = response.read(maximum + 1)
             finally:
                 response.close()
-        except (OSError, urllib.error.URLError, urllib.error.HTTPError):
+        except urllib.error.HTTPError as error:
+            if error.code == 429:
+                self.status = "rate_limited"
+            elif error.code == 402:
+                self.status = "temporarily_exhausted"
+            else:
+                self.status = (
+                    "catalogue_unavailable"
+                    if payload is None else "circuit_open"
+                )
+            raise ProviderError(self.status)
+        except (OSError, urllib.error.URLError):
             self.status = "catalogue_unavailable" if payload is None else "circuit_open"
             raise ProviderError(self.status)
-        if len(data) > MAX_RESPONSE_BYTES:
+        maximum = MAX_CATALOGUE_BYTES if payload is None else MAX_CHAT_RESPONSE_BYTES
+        if len(data) > maximum:
             self.status = "catalogue_unavailable" if payload is None else "circuit_open"
             raise ProviderError(self.status)
         try:
@@ -120,6 +184,7 @@ class OpenRouterProvider(object):
         data = document.get("data") if isinstance(document, dict) else None
         models = [model for model in data or () if self.is_free_text_model(model)]
         models.sort(key=lambda model: model["id"])
+        models = models[:MAX_MODELS]
         with self.lock:
             self.models = models
             self.next_index = 0
@@ -143,11 +208,40 @@ class OpenRouterProvider(object):
     def complete(self, messages, max_tokens=120):
         if not isinstance(messages, list) or not 1 <= len(messages) <= 8:
             raise ValueError("messages must be a bounded non-empty list")
-        for unused in range(len(self.models)):
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int):
+            raise ValueError("max_tokens must be an integer")
+        if not 1 <= max_tokens <= 64:
+            raise ValueError("max_tokens is outside the bounded range")
+        encoded_messages = json.dumps(
+            messages, ensure_ascii=True, separators=(",", ":")
+        ).encode("utf-8")
+        if len(encoded_messages) > 8192:
+            raise ValueError("messages are too large")
+        for unused in range(min(2, len(self.models))):
             model = self.next_model()
             if model is None:
                 return None
-            payload = {"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.4}
+            payload = {
+                "model": model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": 0.4,
+                "stream": False,
+                "modalities": ["text"],
+                "response_format": {"type": "json_object"},
+                "tools": [],
+                "provider": {
+                    "allow_fallbacks": True,
+                    "require_parameters": True,
+                    "data_collection": "deny",
+                    "max_price": {
+                        "prompt": 0,
+                        "completion": 0,
+                        "request": 0,
+                        "image": 0
+                    }
+                }
+            }
             try:
                 document = self._request_json(CHAT_URL, payload)
                 content = document["choices"][0]["message"]["content"]

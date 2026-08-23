@@ -88,6 +88,7 @@ class AdminCommandTests(unittest.TestCase):
         self.world.starting_room.enter(self.admin_player, announce=False)
         self.world.starting_room.enter(self.target_player, announce=False)
         self.original_world_coordinator = blingmud.WORLD_SAVE_COORDINATOR
+        self.original_ai_runtime = blingmud.AI_RUNTIME
 
         with blingmud.SESSIONS_LOCK:
             blingmud.SESSIONS["administrator"] = self.admin
@@ -95,6 +96,7 @@ class AdminCommandTests(unittest.TestCase):
 
     def tearDown(self):
         blingmud.WORLD_SAVE_COORDINATOR = self.original_world_coordinator
+        blingmud.AI_RUNTIME = self.original_ai_runtime
 
         with blingmud.SESSIONS_LOCK:
             blingmud.SESSIONS.pop("administrator", None)
@@ -181,6 +183,25 @@ class AdminCommandTests(unittest.TestCase):
 
         COMMANDS["adminstatus"].execute(self.admin, "rooms")
         self.assertIn("room start", self.transcript(self.admin_request))
+
+    def test_adminstatus_ai_reports_only_bounded_runtime_metadata(self):
+        class Provider(object):
+            status = "healthy"
+
+        class Runtime(object):
+            provider = Provider()
+
+            @staticmethod
+            def status_snapshot():
+                return {"queued": 0, "submitted": 1, "closed": False}
+
+        blingmud.AI_RUNTIME = Runtime()
+        COMMANDS["adminstatus"].execute(self.admin, "ai")
+        transcript = self.transcript(self.admin_request)
+        self.assertIn("npc_ai: provider=healthy", transcript)
+        self.assertIn("submitted", transcript)
+        self.assertNotIn("prompt", transcript.lower())
+        self.assertNotIn("key", transcript.lower())
 
     def test_admin_log_records_action_without_reason_text(self):
         sink = io.StringIO()
