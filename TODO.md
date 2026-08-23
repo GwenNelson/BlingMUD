@@ -134,6 +134,7 @@ Village content
 ☒ Persist bounded acorn supply/danger/harvest totals and Wisp ward/absence/harm state across restarts using strict version-1 world JSON and a one-key asynchronous writer.
 ☐ Make canopy supply renewable across time without enabling unbounded item creation.
 ☒ Add Master Corbel's local-FSM turnery, fixed-price giant-acorn trade/crafting, persistent Acorn Goblets that Val can fill, bounded Acorn Mash food, persistent bounded coins, and the Green-to-Holler loop.
+☒ Register diagonal movement commands and aliases so advertised northeast/northwest/southeast/southwest exits are directly traversable.
 ☐ Add the Smithereens, Eisele, and Tackdriver. (Initial bounded smithy room, Eisele FSM, scrap browse, and Tackdriver examine/listen/talk interactions are implemented; buying and commissions remain.)
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects. (Rare Weed harvesting and bounded runtime-local give-to-Ceridwen experimental stock are implemented; durable unlock and confusion mechanics remain.)
 ☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec. (Initial safe room, reflection, recovery, and Tome interactions are implemented; respec remains gated.)

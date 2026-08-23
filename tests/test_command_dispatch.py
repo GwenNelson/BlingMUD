@@ -117,6 +117,29 @@ class CommandDispatchTests(unittest.TestCase):
         COMMANDS["help"].execute(self.session, "look")
         self.assertIn("room-specific look", self.transcript())
 
+    def test_diagonal_commands_and_aliases_traverse_advertised_exits(self):
+        southeast = Room("southeast", "Southeast", "Southeast room.")
+        northeast = Room("northeast", "Northeast", "Northeast room.")
+        self.room.add_exit("southeast", southeast)
+        southeast.add_exit("northwest", self.room)
+        self.room.add_exit("northeast", northeast)
+        northeast.add_exit("southwest", self.room)
+
+        self.session.handle_command("/southeast")
+        self.assertIs(self.player.room, southeast)
+        self.session.handle_command("/nw")
+        self.assertIs(self.player.room, self.room)
+        self.session.handle_command("/ne")
+        self.assertIs(self.player.room, northeast)
+        self.session.handle_command("/southwest")
+        self.assertIs(self.player.room, self.room)
+
+        for name in (
+            "northeast", "ne", "northwest", "nw",
+            "southeast", "se", "southwest", "sw"
+        ):
+            self.assertIn(name, COMMANDS)
+
     def test_duplicate_primary_name_is_rejected_without_mutation(self):
         original = COMMANDS["look"]
 

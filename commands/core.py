@@ -154,6 +154,34 @@ class DownCommand(DirectionCommand):
 
 
 @register_command
+class NortheastCommand(DirectionCommand):
+    name = "northeast"
+    aliases = ("ne",)
+    direction = "northeast"
+
+
+@register_command
+class NorthwestCommand(DirectionCommand):
+    name = "northwest"
+    aliases = ("nw",)
+    direction = "northwest"
+
+
+@register_command
+class SoutheastCommand(DirectionCommand):
+    name = "southeast"
+    aliases = ("se",)
+    direction = "southeast"
+
+
+@register_command
+class SouthwestCommand(DirectionCommand):
+    name = "southwest"
+    aliases = ("sw",)
+    direction = "southwest"
+
+
+@register_command
 class EmoteCommand(Command):
     name = "me"
     aliases = ("emote",)
