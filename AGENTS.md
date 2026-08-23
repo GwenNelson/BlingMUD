@@ -47,7 +47,7 @@ Project-specific guidance:
 - Treat `tests/test_brave_sir_knight.py` as a required characterization contract. Any Knight or FSM change must preserve the verified patrol, greeting, chore, resource, dialogue, memory, farewell, timing, invalid-state, empty-room, and concurrency behavior unless the user explicitly requests a behavior change; if so, update the tests and all three living documents deliberately.
 - Keep random/content selection algorithms bounded. Never use retry-until-different loops for NPC output; one-entry pools and deterministic test sources must complete safely.
 - Player speech and emotes reach NPCs through the room notification methods; preserve that delivery path when changing chat or command handling.
-- `/tell` is a bounded private fallback command: resolve recipients through canonical active-session indexing, reject control characters and empty/oversized messages, and never log message text.
+- `/tell` is a bounded private fallback command: resolve recipients through canonical active-session indexing, reject disconnected sessions, control characters, and empty/oversized messages, and never log message text.
 - `/hug` is a bounded room-local player interaction; resolve only current room players under the room lock and never allow cross-room targeting.
 - `/flirt` remains a room-local Val interaction; preserve its target validation and do not turn it into a global arbitrary NPC command.
 - The Temple of the Self's current slice is intentionally safe and bounded: reflection, meditation recovery, and Tome text are local; do not claim stat respec or Self-Actualized progression until those mechanics are implemented.

@@ -121,7 +121,7 @@ Connection and session runtime
 - [done: room-local authoring] New village rooms use validated `Room.command_specs` plus bounded `on_command` handlers for local verbs and NPC-specific interactions.
 - [done: command completion] Tab completion operates only on the initial slash-command token, hides admin-only specs from non-admins, canonicalizes exact aliases, completes unique names, extends a common canonical prefix, or lists finite candidates. Parser replacement checks the exact text that generated Tab before mutating, so delayed events cannot overwrite newer input. Argument completion remains deliberately unimplemented.
 - [done: dispatch precedence] Ordinary `Room.on_command` handlers run before global fallbacks, including room aliases, and room specs take matching help/completion precedence. The reserved names `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `adminai`, `quit`, and `exit` bypass rooms even if room code tries to claim them.
-- [done: private messaging] `/tell` provides bounded control-safe private delivery through canonical active-session lookup without logging message content.
+- [done: private messaging] `/tell` provides bounded control-safe private delivery through canonical active-session lookup, rejects sessions already closing, and never logs message content.
 - [done: reusable behaviors] `SimpleRandomBehavior`, `FSMBehavior`, and the advisory FSM wrapper provide reusable local and optional-LLM behavior modes.
 - [done: no-provider playability] World construction and local village NPC/room availability are covered with AI configuration absent, without network access.
 - [done: social interaction] `/hug` targets only a player in the sender's current room and emits one bounded room broadcast.

@@ -812,7 +812,7 @@ class KickCommand(Command):
 
         target = find_active_session(pieces[0])
 
-        if target is None or target.player is None:
+        if target is None or target.player is None or not target.running:
             session.send("That player is not online.")
             return
 
@@ -1272,7 +1272,7 @@ class TellCommand(Command):
             session.send("Usage: {0}".format(self.usage))
             return
         target = find_active_session(pieces[0])
-        if target is None or target.player is None:
+        if target is None or target.player is None or not target.running:
             session.send("That player is not online.")
             return
         try:
