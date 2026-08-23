@@ -177,7 +177,7 @@ class AdminCommandTests(unittest.TestCase):
         COMMANDS["adminstatus"].execute(self.admin, "")
         transcript = self.transcript(self.admin_request)
         self.assertIn("connections: total=3", transcript)
-        self.assertIn("db_schema=3", transcript)
+        self.assertIn("db_schema=4", transcript)
         self.assertIn("database: path=", transcript)
         self.assertIn("character_writer: unavailable", transcript)
 
