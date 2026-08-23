@@ -142,19 +142,20 @@ class AcornGoblet(Drink):
         if self.refusal_message(player) is not None:
             return None
 
-        result = self.held_drink.apply_to(player)
+        drink = self.held_drink
+        result = drink.apply_to(player)
 
         if result is None:
             return None
 
+        result = dict(result)
+        result["goblet_message"] = drink.consumption_message(result)
         self.held_drink = None
         return result
 
     def consumption_message(self, result):
         return "From the acorn goblet: {0}".format(
-            self.held_drink.consumption_message(result)
-            if self.held_drink is not None
-            else "The last of Val's drink goes down very well."
+            result["goblet_message"]
         )
 
     def consumed_after_drinking(self, result):

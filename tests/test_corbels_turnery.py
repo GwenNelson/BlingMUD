@@ -1,7 +1,7 @@
 import unittest
 
 import blingmud
-from commands.core import EatCommand
+from commands.core import DrinkCommand, EatCommand
 from core import FSMBehavior, PLAYER_INVENTORY_LIMIT, Player
 from items.drinks import AcornGoblet, ValkyrieMead
 from items.food import AcornMash
@@ -112,6 +112,18 @@ class CorbelsTurneryTests(unittest.TestCase):
                 tavern.leave(self.player, announce=False)
             if tavern.val.room is tavern:
                 tavern.remove_npc(tavern.val)
+
+    def test_goblet_drinking_preserves_the_contained_drinks_real_feedback(self):
+        goblet = AcornGoblet(ValkyrieMead())
+        self.player.inventory = [goblet]
+
+        DrinkCommand().execute(self.session, "acorn goblet")
+
+        self.assertEqual(self.player.intoxication, 20)
+        self.assertIsNone(goblet.held_drink)
+        self.assertEqual(self.player.inventory, [goblet])
+        self.assertIn("mead tastes of honey", self.transcript())
+        self.assertIn("Intoxication rises by 20", self.transcript())
 
     def test_mash_is_a_real_bounded_food(self):
         mash = AcornMash()

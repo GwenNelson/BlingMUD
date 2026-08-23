@@ -134,6 +134,7 @@ Village content
 ☒ Persist bounded acorn supply/danger/harvest totals and Wisp ward/absence/harm state across restarts using strict version-1 world JSON and a one-key asynchronous writer.
 ☐ Make canopy supply renewable across time without enabling unbounded item creation.
 ☒ Add Master Corbel's local-FSM turnery, fixed-price giant-acorn trade/crafting, persistent Acorn Goblets that Val can fill, bounded Acorn Mash food, persistent bounded coins, and the Green-to-Holler loop.
+☒ Preserve and display the contained Val drink's real effect message when drinking from a reusable Acorn Goblet.
 ☒ Register diagonal movement commands and aliases so advertised northeast/northwest/southeast/southwest exits are directly traversable.
 ☒ Guarantee bare `/look` and `/l` show the full room and all exits in every room, while preserving targeted room-local look behavior such as the Temple mirror.
 ☒ Add an all-room user-expectation audit for reachability, reciprocal/direct exits, complete look output, claimed command aliases, and representative valid feature dispatch.
