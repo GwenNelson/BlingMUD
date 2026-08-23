@@ -20,13 +20,20 @@ class CeridwenGardenTests(unittest.TestCase):
         session = Session(player)
         cottage = CeridwensCottage()
         garden = OvergrownHerbGarden()
+        player.coins = 3
         cottage.enter(player, announce=False)
         cottage.on_command(session, "buy", "salve")
         self.assertIn("rare weed", session.messages[-1])
+        cottage.on_command(session, "buy", "experimental")
+        self.assertIn("locked", session.messages[-1])
         cottage.leave(player, announce=False)
         garden.enter(player, announce=False)
         garden.on_command(session, "harvest", "weed")
         self.assertIn("harvest one rare weed", session.messages[-1])
+        cottage.enter(player, announce=False)
+        cottage.on_command(session, "give", "weed")
+        cottage.on_command(session, "buy", "experimental")
+        self.assertIn("experimental potion", session.messages[-1])
         garden.leave(player, announce=False)
 
 
