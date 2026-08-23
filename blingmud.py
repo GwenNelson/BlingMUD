@@ -1255,6 +1255,34 @@ class WhoCommand(Command):
         session.send("Online: {0}".format(", ".join(names)))
 
 
+@register_command
+class TellCommand(Command):
+    name = "tell"
+    aliases = ()
+    usage = "/tell <player> <message>"
+    summary = "Send a bounded private message to an online player."
+
+    def execute(self, session, arguments):
+        pieces = arguments.split(None, 1)
+        if len(pieces) != 2:
+            session.send("Usage: {0}".format(self.usage))
+            return
+        target = find_active_session(pieces[0])
+        if target is None or target.player is None:
+            session.send("That player is not online.")
+            return
+        try:
+            message = validated_admin_text(pieces[1], label="message", maximum=200)
+        except ValueError as error:
+            session.send(str(error).capitalize() + ".")
+            return
+        if not message:
+            session.send("Your message is empty.")
+            return
+        target.send("{0} tells you: {1}".format(session.player.name, message))
+        session.send("You tell {0}: {1}".format(target.player.name, message))
+
+
 
 @register_command
 class WorshipCommand(Command):

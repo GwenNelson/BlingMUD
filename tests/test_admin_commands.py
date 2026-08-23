@@ -281,6 +281,15 @@ class AdminCommandTests(unittest.TestCase):
         self.assertTrue(document["reason_supplied"])
         self.assertNotIn("private operator explanation", sink.getvalue())
 
+    def test_tell_uses_canonical_session_lookup_and_bounds_message(self):
+        COMMANDS["tell"].execute(self.admin, "TARGET hello there")
+        self.assertIn("Administrator tells you: hello there", self.transcript(self.target_request))
+        self.assertIn("You tell Target: hello there", self.transcript(self.admin_request))
+        before = len(self.target_request.sent)
+        COMMANDS["tell"].execute(self.admin, "target " + ("x" * 201))
+        self.assertEqual(before, len(self.target_request.sent))
+        self.assertIn("too long", self.transcript(self.admin_request))
+
 
 if __name__ == "__main__":
     unittest.main()
