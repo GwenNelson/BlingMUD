@@ -123,6 +123,7 @@ Connection and session runtime
 - [done: private messaging] `/tell` provides bounded control-safe private delivery through canonical active-session lookup without logging message content.
 - [done: social interaction] `/hug` targets only a player in the sender's current room and emits one bounded room broadcast.
 - [partly done: Temple] The Temple of the Self now exists as a safe room with bounded mirror reflection, meditation recovery, and stable Tome text; stat respec and Self-Actualized progression remain gated work.
+- [partly done: Smithereens] The Smithereens room now has bounded scrap browsing, Eisele's local FSM, and Tackdriver's examine/listen/talk interactions; item purchasing and commissions remain gated.
 - [done: tavern interaction] `/flirt val` remains a bounded Val-specific room command with local response behavior.
 - [done: registry safety] Global registration validates complete metadata and checks every normalized primary name/alias before mutating `COMMANDS`; any collision raises and leaves the registry unchanged.
 - [done: equipment UX] `/unequip <item or slot>` and its `/remove` alias resolve a case-insensitive slot before an equipped item name, apply the item's trusted unequip hook once, delete the equipment mapping, preserve inventory membership, notify the player, and broadcast the removal.

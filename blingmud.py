@@ -685,6 +685,7 @@ from rooms.village_green import VillageGreen
 from rooms.vals_hella_holler import ValsHellaHoller
 from rooms.corbels_turnery import CorbelsTurnery
 from rooms.temple_of_self import TempleOfSelf
+from rooms.smithereens import Smithereens
 from village_state import VillageState
 from npc_ai_config import configure_world_ai
 
@@ -2434,6 +2435,7 @@ class World(object):
         tavern = self.add_room(ValsHellaHoller(self.village_state))
         turnery = self.add_room(CorbelsTurnery())
         temple = self.add_room(TempleOfSelf())
+        smithy = self.add_room(Smithereens())
 
         square.add_exit("north", chamber)
         chamber.add_exit("south", square)
@@ -2457,6 +2459,8 @@ class World(object):
         turnery.add_exit("east", green)
         green.add_exit("south", temple)
         temple.add_exit("north", green)
+        green.add_exit("southeast", smithy)
+        smithy.add_exit("northwest", green)
 
         self.starting_room = square
 
