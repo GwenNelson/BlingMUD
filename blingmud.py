@@ -1151,7 +1151,7 @@ class AdminStatusCommand(Command):
 class AdminAICommand(Command):
     name = "adminai"
     aliases = ()
-    usage = "/adminai [status|refresh|clear|enable|disable|inspect <knight|val>|npc <knight|val> <local|advisory>]"
+    usage = "/adminai [status|refresh|clear|enable [<knight|val> [advisory|local]]|disable [<knight|val>]|inspect <knight|val>|npc <knight|val> <local|advisory>]"
     summary = "Inspect or control bounded optional NPC advisory AI."
     admin_only = True
 
@@ -1180,6 +1180,29 @@ class AdminAICommand(Command):
             AI_RUNTIME.set_enabled(False)
             session.send("npc_ai: disabled")
             log_event("admin.ai", actor=session.player.name, operation="disable")
+            return
+        if operation in ("enable", "disable") and len(parts) in (2, 3):
+            npc_name = parts[1].lower()
+            mode = parts[2].lower() if len(parts) == 3 else (
+                "advisory" if operation == "enable" else "local"
+            )
+            if npc_name not in ("knight", "val") or mode not in ("local", "advisory"):
+                session.send("Usage: {0}".format(self.usage))
+                return
+            if operation == "enable":
+                if getattr(AI_RUNTIME.provider, "status", "key_missing") == "key_missing":
+                    session.send("npc_ai: key_missing")
+                    return
+                AI_RUNTIME.set_enabled(True)
+            npc = self._npc_behavior(session, npc_name)
+            behavior = None if npc is None else npc.behavior
+            setter = getattr(behavior, "set_local_only", None)
+            if setter is None:
+                session.send("npc_ai: npc_unavailable")
+                return
+            setter(mode == "local")
+            session.send("npc_ai: {0} mode={1}".format(npc_name, mode))
+            log_event("admin.ai", actor=session.player.name, operation="npc_mode", npc=npc_name, mode=mode)
             return
         if operation == "enable" and len(parts) == 1:
             if getattr(AI_RUNTIME.provider, "status", "key_missing") == "key_missing":

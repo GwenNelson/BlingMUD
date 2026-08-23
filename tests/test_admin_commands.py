@@ -3,6 +3,7 @@ import json
 import unittest
 
 import blingmud
+from llm_fsm import AdvisoryFSMBehavior
 from core import COMMANDS, Player, Room
 from operational_log import OPS_LOG
 
@@ -235,6 +236,26 @@ class AdminCommandTests(unittest.TestCase):
         self.assertIn("disabled", transcript)
         self.assertIn("enabled", transcript)
         self.assertNotIn("key", transcript.lower())
+
+    def test_adminai_enable_accepts_npc_mode_syntax(self):
+        class Provider(object):
+            status = "healthy"
+        class Runtime(object):
+            provider = Provider()
+            def set_enabled(self, value):
+                self.enabled = value
+        original_world = self.admin.world
+        self.admin.world = blingmud.World()
+        blingmud.AI_RUNTIME = Runtime()
+        knight = self.admin.world.rooms["crossroads"].knight
+        knight.set_behavior(AdvisoryFSMBehavior(knight.behavior, blingmud.AI_RUNTIME))
+        try:
+            COMMANDS["adminai"].execute(self.admin, "enable knight advisory")
+            self.assertFalse(self.admin.world.rooms["crossroads"].knight.behavior.local_only)
+            COMMANDS["adminai"].execute(self.admin, "disable knight")
+            self.assertTrue(self.admin.world.rooms["crossroads"].knight.behavior.local_only)
+        finally:
+            self.admin.world = original_world
 
     def test_adminai_inspect_reports_only_bounded_npc_metadata(self):
         class Provider(object):
