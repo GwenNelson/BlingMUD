@@ -76,7 +76,7 @@ NPCs
 ☐ Add reusable behavior implementations so a single NPC can be:
   ☒ simple random chatter
   ☒ deterministic data-backed FSM
-  ☐ FSM with optional LLM assistance
+  ☒ FSM with optional LLM assistance
 ☒ Re-express Brave Sir Knight's state machine through `FSMBehavior`, with a thin NPC entity and behavior-owned state/content.
 ☒ Add a comprehensive Brave Sir Knight characterization suite covering all states, chore paths, greetings, farewells, memory, timing, invalid-state recovery, empty-room behavior, random output branches, and concurrent decisions.
 ☒ Add the Suspicious Alley bin-possum encounter with local FSM behavior, safe hat tribute in both natural command orders, accurate `/get` feedback, speech reactions, and one-per-player keepsakes.
@@ -96,8 +96,8 @@ Admin / ops
 ☒ Add admin-only `/shutdown now`, `/kick`, `/heal`, `/save`, and `/adminstatus`, with confirmation/bounds, graceful output draining, shared health/save paths, and non-admin help/completion filtering.
 ☒ Add bounded `/adminstatus rooms` and `/adminstatus npcs` views for activity, behavior mode, actor fallback, queues, and errors.
 ☒ Add bounded admin-only `/adminai` status, refresh, circuit-clear, enable/disable, and per-NPC local/advisory controls.
-☐ Extend admin inspection to future structured NPC memory, LLM budgets, and brain health after those systems exist.
-☐ Add commands to force NPC mode changes for debugging.
+☒ Extend admin inspection to bounded LLM runtime budgets and brain admission/mode health; richer memory inspection remains future work.
+☒ Add commands to force wrapped NPC mode changes for debugging.
 ☒ Add bounded, control-safe JSON-lines operational logging for login/rate limits, connection and server lifecycle, character/world save/load, room-local triggers, NPC decisions/failures, and admin actions; redact secret-like fields and omit chat, prompts, command arguments, admin reason text, action text, serialized state, exception messages, and tracebacks.
 ☐ Extend the same structured event contract to future LLM calls, budget decisions, circuit-breaker changes, health probes, and local fallback/recovery without ever logging provider keys or prompt/response content by default.
 ☐ Add safe reload/debug tools where they do not risk player state.
