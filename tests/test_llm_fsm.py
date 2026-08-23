@@ -58,6 +58,19 @@ class SilentAdvisor(CallbackAdvisor):
         return True
 
 
+class DeferredReplyAdvisor(CallbackAdvisor):
+    llm_ready = True
+
+    def __init__(self):
+        super().__init__()
+        self.callback = None
+
+    def observe(self, frame, callback):
+        self.frames.append(frame)
+        self.callback = callback
+        return True
+
+
 class CandidateFallback(Fallback):
     def __init__(self):
         super().__init__()
@@ -180,6 +193,73 @@ class AdvisoryFSMTests(unittest.TestCase):
             behavior._store_hint(0, advisor.frames[0], "Too late.")
         )
         self.assertEqual(behavior.tick(), None)
+        room.leave(player, announce=False)
+        room.remove_npc(npc)
+
+    def test_forcing_local_replaces_queued_remote_speech_with_fallback(self):
+        behavior = AdvisoryFSMBehavior(CandidateFallback(), ReplyAdvisor())
+        npc = NPC("Test", "test", behavior=behavior)
+        room = Room("test", "Test", "test")
+        room.add_npc(npc)
+        player = Player("Player")
+        room.enter(player, announce=False)
+        self.assertEqual(behavior.on_say(player, "hello"), ())
+
+        behavior.set_local_only(True)
+        actions = behavior.tick()
+
+        self.assertEqual(behavior.mode, NPCBehavior.MODE_FSM)
+        self.assertEqual(
+            tuple(action.text for action in actions),
+            ("local reply",)
+        )
+        room.leave(player, announce=False)
+        room.remove_npc(npc)
+
+    def test_global_advisory_disable_replaces_queued_remote_speech(self):
+        advisor = ReplyAdvisor()
+        advisor.enabled = True
+        behavior = AdvisoryFSMBehavior(CandidateFallback(), advisor)
+        npc = NPC("Test", "test", behavior=behavior)
+        room = Room("test", "Test", "test")
+        room.add_npc(npc)
+        player = Player("Player")
+        room.enter(player, announce=False)
+        self.assertEqual(behavior.on_say(player, "hello"), ())
+
+        advisor.enabled = False
+        actions = behavior.tick()
+
+        self.assertEqual(behavior.mode, NPCBehavior.MODE_FSM)
+        self.assertEqual(
+            tuple(action.text for action in actions),
+            ("local reply",)
+        )
+        room.leave(player, announce=False)
+        room.remove_npc(npc)
+
+    def test_forcing_local_rejects_inflight_reply_and_releases_fallback(self):
+        advisor = DeferredReplyAdvisor()
+        behavior = AdvisoryFSMBehavior(CandidateFallback(), advisor)
+        npc = NPC("Test", "test", behavior=behavior)
+        room = Room("test", "Test", "test")
+        room.add_npc(npc)
+        player = Player("Player")
+        room.enter(player, announce=False)
+        self.assertEqual(behavior.on_say(player, "hello"), ())
+
+        behavior.set_local_only(True)
+        self.assertFalse(advisor.callback(
+            0,
+            advisor.frames[0],
+            "This remote reply must not speak."
+        ))
+        actions = behavior.tick()
+
+        self.assertEqual(
+            tuple(action.text for action in actions),
+            ("local reply",)
+        )
         room.leave(player, announce=False)
         room.remove_npc(npc)
 

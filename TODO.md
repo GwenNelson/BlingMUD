@@ -102,6 +102,7 @@ Admin / ops
 ☒ Add admin-only `/shutdown now`, `/kick`, `/heal`, `/save`, and `/adminstatus`, with confirmation/bounds, graceful output draining, shared health/save paths, and non-admin help/completion filtering.
 ☒ Add bounded `/adminstatus rooms` and `/adminstatus npcs` views for activity, behavior mode, actor fallback, queues, and errors.
 ☒ Add bounded admin-only `/adminai` status, refresh, circuit-clear, enable/disable, and per-NPC local/advisory controls, including `/adminai enable knight advisory` syntax.
+☒ Make global advisory disable and per-NPC local mode reject queued or in-flight remote speech and release the exact FSM fallback.
 ☒ Extend admin inspection to bounded LLM runtime budgets, brain admission/mode health, and metadata-only NPC state counts; raw memory inspection remains intentionally excluded.
 ☒ Add commands to force wrapped NPC mode changes for debugging.
 ☒ Add bounded, control-safe JSON-lines operational logging for login/rate limits, connection and server lifecycle, character/world save/load, room-local triggers, NPC decisions/failures, and admin actions; redact secret-like fields and omit chat, prompts, command arguments, admin reason text, action text, serialized state, exception messages, and tracebacks.

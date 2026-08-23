@@ -57,7 +57,11 @@ class AdvisoryFSMBehavior(NPCBehavior):
     @property
     def mode(self):
         ready = False
+        advisor_enabled = False
         if self.advisor is not None:
+            advisor_enabled = bool(
+                getattr(self.advisor, "enabled", True)
+            )
             readiness = getattr(self.advisor, "is_ready", None)
             if readiness is not None and self.npc is not None:
                 ready = readiness(self.npc.name)
@@ -66,6 +70,7 @@ class AdvisoryFSMBehavior(NPCBehavior):
         if (
             not self.local_only
             and self.advisor is not None
+            and advisor_enabled
             and ready
         ):
             return NPCBehavior.MODE_LLM_FSM
@@ -109,15 +114,30 @@ class AdvisoryFSMBehavior(NPCBehavior):
                 ]
                 for request_id in expired:
                     pending = self._pending_speech.pop(request_id)
-                    self._pending_outputs.append(pending["fallback"])
+                    self._pending_outputs.append({
+                        "actions": pending["fallback"],
+                        "fallback": pending["fallback"],
+                        "remote": False
+                    })
                 outputs = tuple(self._pending_outputs)
                 self._pending_outputs.clear()
+                remote_blocked = (
+                    self.local_only
+                    or self.advisor is None
+                    or not bool(getattr(self.advisor, "enabled", True))
+                )
             if outputs and self._active():
                 existing = () if result is None else (
                     tuple(result) if isinstance(result, (tuple, list)) else (result,)
                 )
                 result = existing + tuple(
-                    action for output in outputs for action in output
+                    action
+                    for output in outputs
+                    for action in (
+                        output["fallback"]
+                        if output["remote"] and remote_blocked
+                        else output["actions"]
+                    )
                 )
         if self.local_only or self.advisor is None or not self._active():
             return result
@@ -213,8 +233,9 @@ class AdvisoryFSMBehavior(NPCBehavior):
 
     def set_local_only(self, enabled=True):
         """Force the wrapped FSM to remain local without changing its state."""
-        self.local_only = bool(enabled)
-        return self.local_only
+        with self._advisory_lock:
+            self.local_only = bool(enabled)
+            return self.local_only
 
     def _store_hint(self, choice, frame, reply=None):
         request_id = frame.get("request_id")
@@ -223,12 +244,31 @@ class AdvisoryFSMBehavior(NPCBehavior):
                 with self._advisory_lock:
                     self._pending_speech.pop(request_id, None)
             return False
+        with self._advisory_lock:
+            remote_blocked = (
+                self.local_only
+                or self.advisor is None
+                or not bool(getattr(self.advisor, "enabled", True))
+            )
+            if remote_blocked:
+                pending = self._pending_speech.pop(request_id, None)
+                if pending is not None:
+                    self._pending_outputs.append({
+                        "actions": pending["fallback"],
+                        "fallback": pending["fallback"],
+                        "remote": False
+                    })
+                return False
         if choice is None:
             if request_id is not None:
                 with self._advisory_lock:
                     pending = self._pending_speech.pop(request_id, None)
                     if pending is not None:
-                        self._pending_outputs.append(pending["fallback"])
+                        self._pending_outputs.append({
+                            "actions": pending["fallback"],
+                            "fallback": pending["fallback"],
+                            "remote": False
+                        })
             return True
         candidate = frame.get("candidates", ())
         if not candidate:
@@ -238,6 +278,7 @@ class AdvisoryFSMBehavior(NPCBehavior):
         if setter is None and not reply:
             return False
         with self._advisory_lock:
+            pending = None
             if request_id is not None:
                 pending = self._pending_speech.pop(request_id, None)
                 if pending is None:
@@ -245,7 +286,13 @@ class AdvisoryFSMBehavior(NPCBehavior):
             if setter is not None:
                 setter(frame.get("state"), candidate_id, choice)
             if frame.get("event") == "on_say" and reply:
-                self._pending_outputs.append((NPCAction.say(reply),))
+                self._pending_outputs.append({
+                    "actions": (NPCAction.say(reply),),
+                    "fallback": (
+                        () if pending is None else pending["fallback"]
+                    ),
+                    "remote": True
+                })
                 self._conversation.append({
                     "speaker": str(frame.get("speaker", "traveller"))[:80],
                     "input": str(frame.get("input", ""))[:500],

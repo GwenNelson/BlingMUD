@@ -74,7 +74,7 @@ After `/admin`, the implemented session-only commands are:
 - `/save [player|all|world]` — request a focused or nonblocking bulk save.
 - `/adminstatus [rooms|npcs|ai]` — show bounded runtime, activity, persistence, NPC-actor, and optional AI diagnostics.
 
-Admin privilege is never persisted in character state. Admin reasons are shown to affected players but operational logs record only whether a reason was supplied.
+Admin privilege is never persisted in character state. Admin reasons are shown to affected players but operational logs record only whether a reason was supplied. Disabling advisory AI globally or for one NPC prevents already queued remote speech from leaking through and restores the saved local fallback.
 
 ### NPC and failure model
 
