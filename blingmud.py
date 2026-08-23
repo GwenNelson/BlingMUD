@@ -1181,7 +1181,10 @@ class AdminAICommand(Command):
             session.send("npc_ai: disabled")
             log_event("admin.ai", actor=session.player.name, operation="disable")
             return
-        if operation in ("enable", "disable") and len(parts) in (2, 3):
+        if (
+            (operation == "enable" and len(parts) in (2, 3))
+            or (operation == "disable" and len(parts) == 2)
+        ):
             npc_name = parts[1].lower()
             mode = parts[2].lower() if len(parts) == 3 else (
                 "advisory" if operation == "enable" else "local"

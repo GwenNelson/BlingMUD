@@ -254,6 +254,16 @@ class AdminCommandTests(unittest.TestCase):
             self.assertFalse(self.admin.world.rooms["crossroads"].knight.behavior.local_only)
             COMMANDS["adminai"].execute(self.admin, "disable knight")
             self.assertTrue(self.admin.world.rooms["crossroads"].knight.behavior.local_only)
+
+            self.admin_request.sent = []
+            COMMANDS["adminai"].execute(
+                self.admin,
+                "disable knight advisory"
+            )
+            self.assertTrue(
+                self.admin.world.rooms["crossroads"].knight.behavior.local_only
+            )
+            self.assertIn("Usage:", self.transcript(self.admin_request))
         finally:
             self.admin.world = original_world
 
