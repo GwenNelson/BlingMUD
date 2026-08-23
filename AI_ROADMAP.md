@@ -139,6 +139,7 @@ Connection and session runtime
 - [done: registry safety] Global registration validates complete metadata and checks every normalized primary name/alias before mutating `COMMANDS`; any collision raises and leaves the registry unchanged.
 - [done: equipment UX] `/unequip <item or slot>` and its `/remove` alias resolve a case-insensitive slot before an equipped item name, apply the item's trusted unequip hook once, delete the equipment mapping, preserve inventory membership, notify the player, and broadcast the removal.
 - [done: no-listener integration] Real selector readiness is covered with unnamed local socket pairs for fragmented Telnet read/echo, hidden-password selector authentication through the actual bounded pool, output-draining graceful shutdown, and fake-clock idle closure. Tests have finite pumps and teardown, never call `bind()`/`serve_forever()`/`main()`, and capability-skip only when a host explicitly denies local socketpair writes.
+- [done: stateful public-world audit] Real `Session` dispatch now covers complete player-shaped journeys through the possum tribute, Ceridwen weed remedy, canopy-Corbel-Val economy and consumables, character save/restore, Wisp consequence, collapse, and Temple recovery paths in addition to the all-room reachability/command audit.
 
 Admin and operational tooling
 

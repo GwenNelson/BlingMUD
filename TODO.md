@@ -139,6 +139,7 @@ Village content
 ☒ Register diagonal movement commands and aliases so advertised northeast/northwest/southeast/southwest exits are directly traversable.
 ☒ Guarantee bare `/look` and `/l` show the full room and all exits in every room, while preserving targeted room-local look behavior such as the Temple mirror.
 ☒ Add an all-room user-expectation audit for reachability, reciprocal/direct exits, complete look output, claimed command aliases, and representative valid feature dispatch.
+☒ Add stateful full-dispatch journeys for the possum, Ceridwen, acorn economy, Val consumables, persistence, Wisp harm, collapse, and Temple recovery.
 ☐ Add the Smithereens, Eisele, and Tackdriver. (Initial bounded smithy room, Eisele FSM, scrap browse, and Tackdriver examine/listen/talk interactions are implemented; buying and commissions remain.)
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects. (Rare Weed harvesting and bounded runtime-local give-to-Ceridwen experimental stock are implemented; durable unlock and confusion mechanics remain.)
 ☒ Make Ceridwen's advertised `/give weed` command return bounded syntax feedback for missing or invalid targets instead of falling through as unknown.

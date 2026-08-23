@@ -3,6 +3,11 @@ import unittest
 
 import blingmud
 from core import COMMANDS, Player, find_command_spec
+from items.drinks import AcornGoblet, HornBornSpecial
+from items.food import AcornMash
+from items.pimp_hat import PimpHat
+from items.possum_token import RoyalPossumBottleCap
+from player_state import restore_player_state, serialize_player_state
 
 
 ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
@@ -187,6 +192,137 @@ class WorldUserExpectationTests(unittest.TestCase):
                     transcript = self.run_command(command, arguments)
                     self.assertNotIn("Unknown command", transcript)
                     self.assertIn(expected.lower(), transcript.lower())
+
+    def test_possum_journey_accepts_equipped_tribute_and_awards_once(self):
+        self.enter(self.world.starting_room)
+        self.run_command("east")
+        self.assertIn("demands tribute", self.run_command("search", "bin"))
+        self.run_command("bling")
+        self.run_command("take", "pimp hat")
+        self.run_command("equip", "pimp hat")
+        self.assertEqual(self.player.fabulousness, 10)
+
+        transcript = self.run_command("offer", "pimp hat to possum")
+
+        self.assertIn("accepts your tribute", transcript)
+        self.assertEqual(self.player.fabulousness, 0)
+        self.assertFalse(any(
+            isinstance(item, PimpHat) for item in self.player.inventory
+        ))
+        self.assertEqual(self.player.equipment, {})
+
+        self.run_command("pet", "possum")
+        second_pet = self.run_command("stroke", "the possum")
+        rewards = [
+            item for item in self.player.inventory
+            if isinstance(item, RoyalPossumBottleCap)
+        ]
+        self.assertEqual(len(rewards), 1)
+        self.assertIn("only once", second_pet)
+
+    def test_ceridwen_journey_harvests_unlocks_buys_and_consumes(self):
+        self.enter(self.world.starting_room)
+        self.player.coins = 3
+        for command in ("west", "northeast", "east"):
+            self.run_command(command)
+
+        self.assertIn("harvest one rare weed", self.run_command(
+            "harvest", "weed"
+        ).lower())
+        self.run_command("west")
+        self.assertIn("unlocks", self.run_command("give", "weed"))
+        self.assertIn("sells", self.run_command("buy", "experimental"))
+        self.assertEqual(self.player.coins, 0)
+        self.assertEqual(len(self.player.inventory), 1)
+        self.assertIsInstance(self.player.inventory[0], HornBornSpecial)
+
+        transcript = self.run_command("drink", "horn-born special")
+
+        self.assertIn("adds 8 intoxication", transcript)
+        self.assertEqual(self.player.intoxication, 8)
+        self.assertEqual(self.player.inventory, [])
+
+    def test_acorn_economy_journey_reaches_val_and_survives_restore(self):
+        self.enter(self.world.starting_room)
+        self.run_command("west")
+
+        for unused in range(2):
+            self.run_command("up")
+            self.assertIn("wrestle a giant acorn", self.run_command(
+                "harvest", "acorn"
+            ))
+            self.run_command("down")
+            self.run_command("west")
+            self.assertIn("receive 5 coins", self.run_command(
+                "trade", "acorn"
+            ))
+            self.run_command("east")
+
+        self.run_command("west")
+        self.assertIn("buy acorn goblet", self.run_command(
+            "buy", "goblet"
+        ))
+        self.assertIn("buy acorn mash", self.run_command("buy", "mash"))
+        self.assertEqual(self.player.coins, 0)
+        self.run_command("east")
+        self.run_command("north")
+
+        self.assertIn("acorn goblet", self.run_command("order", "mead"))
+        drink_result = self.run_command("drink", "acorn goblet")
+        self.assertIn("honey", drink_result)
+        self.assertIn("Intoxication rises by 20", drink_result)
+        goblet = next(
+            item for item in self.player.inventory
+            if isinstance(item, AcornGoblet)
+        )
+        self.assertIsNone(goblet.held_drink)
+
+        self.player.health = 90
+        self.assertIn("restores 8 health", self.run_command(
+            "eat", "acorn mash"
+        ))
+        self.assertEqual(self.player.health, 98)
+        self.assertFalse(any(
+            isinstance(item, AcornMash) for item in self.player.inventory
+        ))
+
+        restored = Player("RestoredEconomist")
+        restored_room = restore_player_state(
+            restored,
+            serialize_player_state(self.player),
+            self.world,
+            time_source=lambda: self.player.last_status_update
+        )
+        self.assertIs(restored_room, self.player.room)
+        self.assertEqual(restored.coins, 0)
+        self.assertEqual(restored.intoxication, 20)
+        self.assertEqual(len(restored.inventory), 1)
+        self.assertIsInstance(restored.inventory[0], AcornGoblet)
+        self.assertIsNone(restored.inventory[0].held_drink)
+
+    def test_wisp_consequence_collapse_and_temple_recovery_journey(self):
+        self.enter(self.world.starting_room)
+        self.run_command("west")
+        self.assertIn("ward", self.run_command("protect", "wisp mother"))
+        self.assertIn("survives", self.run_command("attack", "wisp mother"))
+        self.assertIn("remember", self.run_command("attack", "wisp mother"))
+        self.assertIn("unnaturally dark", self.run_command("look"))
+
+        self.player.health = 3
+        self.run_command("north")
+        self.assertIn("harmed the Wisp Mother", self.transcript())
+        collapse = self.run_command("attack", "val")
+        self.assertIn("You collapse", collapse)
+        self.assertIs(self.player.room, self.world.starting_room)
+        self.assertEqual(self.player.health, 1)
+        self.assertTrue(self.player.recently_respawned)
+
+        self.run_command("west")
+        self.run_command("south")
+        self.assertIn("recover 5 health", self.run_command("meditate"))
+        reflection = self.run_command("look", "mirror")
+        self.assertIn("health 6/100", reflection)
+        self.assertEqual(self.player.health, 6)
 
 
 if __name__ == "__main__":
