@@ -107,7 +107,9 @@
 
   Add any missing room commands with normal room-first precedence. Global commands must remain fallback-only where a room defines the same command.
 
-  ## Phase 2: Generic LLM/FSM architecture
+  ## Phase 2: Generic LLM/FSM architecture — implemented foundation
+
+  `AdvisoryFSMBehavior` wraps an existing behavior without replacing its state or output, emits a bounded one-candidate structured frame only in occupied rooms, and delegates every failure to the exact local result. Explicitly enabled worlds wrap Brave Sir Knight and Val; disabled worlds construct no runtime and do not read the key.
 
   ### Core adapter
 

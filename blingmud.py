@@ -79,6 +79,7 @@ AUTOSAVE_COORDINATOR = None
 STATUS_COORDINATOR = None
 WORLD_STATE_WRITER = None
 WORLD_SAVE_COORDINATOR = None
+AI_RUNTIME = None
 
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 600000
@@ -630,6 +631,7 @@ from rooms.village_green import VillageGreen
 from rooms.vals_hella_holler import ValsHellaHoller
 from rooms.corbels_turnery import CorbelsTurnery
 from village_state import VillageState
+from npc_ai_config import configure_world_ai
 
 from commands.core import *
 
@@ -1066,6 +1068,16 @@ class AdminStatusCommand(Command):
                 session.send(
                     "{0}: {1}".format(label, component.status_snapshot())
                 )
+
+        if AI_RUNTIME is None:
+            session.send("npc_ai: disabled_by_config")
+        else:
+            session.send(
+                "npc_ai: provider={0} runtime={1}".format(
+                    AI_RUNTIME.provider.status,
+                    AI_RUNTIME.status_snapshot()
+                )
+            )
 
 
 @register_command
@@ -2845,6 +2857,7 @@ def main():
     global STATUS_COORDINATOR
     global WORLD_STATE_WRITER
     global WORLD_SAVE_COORDINATOR
+    global AI_RUNTIME
 
     try:
         host, port = configured_server_address()
@@ -2885,6 +2898,11 @@ def main():
         )
 
     WORLD.synchronize_persisted_state()
+    AI_RUNTIME = configure_world_ai(
+        WORLD,
+        environ=os.environ,
+        directory=os.path.dirname(os.path.abspath(__file__))
+    )
 
     PERSISTENCE_WRITER = PersistenceWriter(persist_user_state)
     PERSISTENCE_WRITER.start()
@@ -2943,6 +2961,9 @@ def main():
         server.bind()
     except OSError as error:
         server.server_close()
+        if AI_RUNTIME is not None:
+            AI_RUNTIME.shutdown(1.0)
+            AI_RUNTIME = None
         PERSISTENCE_WRITER.shutdown(GRACEFUL_FLUSH_SECONDS)
         WORLD_STATE_WRITER.shutdown(GRACEFUL_FLUSH_SECONDS)
         PERSISTENCE_WRITER = None
@@ -2985,6 +3006,9 @@ def main():
     finally:
         log_event("server.stopping", sessions=len(active_sessions_snapshot()))
         NPC_MANAGER.stop()
+        if AI_RUNTIME is not None:
+            AI_RUNTIME.shutdown(1.0)
+            AI_RUNTIME = None
         sessions = active_sessions_snapshot()
         server.shutdown()
         server.server_close()

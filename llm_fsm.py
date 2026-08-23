@@ -13,6 +13,20 @@ class AdvisoryFSMBehavior(NPCBehavior):
     """
 
     mode = NPCBehavior.MODE_LLM_FSM
+    _LOCAL = frozenset(("fallback", "advisor", "advisory_failures", "advisory_calls", "npc"))
+
+    def __getattr__(self, name):
+        fallback = self.__dict__.get("fallback")
+        if fallback is not None:
+            return getattr(fallback, name)
+        raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        fallback = self.__dict__.get("fallback")
+        if fallback is not None and name not in self._LOCAL and hasattr(fallback, name):
+            setattr(fallback, name, value)
+            return
+        object.__setattr__(self, name, value)
 
     def __init__(self, fallback, advisor=None):
         if not isinstance(fallback, NPCBehavior):
@@ -49,7 +63,25 @@ class AdvisoryFSMBehavior(NPCBehavior):
             actions = tuple(result)
         else:
             actions = (result,)
-        frame = {"event": method, "actions": actions}
+        npc = self.npc
+        room = npc.room
+        snapshot = room.activity_snapshot()
+        frame = {
+            "event": method,
+            "npc": npc.name[:80],
+            "state": getattr(self.fallback, "current_state", None),
+            "room": room.room_id[:80],
+            "occupancy": snapshot["occupancy"],
+            "visits": min(snapshot["visits"], 1000000),
+            "interactions": min(snapshot["interactions"], 1000000),
+            "candidates": [{
+                "choice": 0,
+                "actions": [
+                    {"type": action.action_type, "text": action.text[:1000]}
+                    for action in actions[:8]
+                ]
+            }]
+        }
         try:
             self.advisor.observe(frame)
             self.advisory_calls += 1

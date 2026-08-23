@@ -81,15 +81,15 @@ NPCs
 ☒ Add a comprehensive Brave Sir Knight characterization suite covering all states, chore paths, greetings, farewells, memory, timing, invalid-state recovery, empty-room behavior, random output branches, and concurrent decisions.
 ☒ Add the Suspicious Alley bin-possum encounter with local FSM behavior, safe hat tribute in both natural command orders, accurate `/get` feedback, speech reactions, and one-per-player keepsakes.
 ☐ Make NPC memory structured and optional.
-☐ Add fallback from LLM to FSM when the provider is unavailable.
-☐ Make OpenRouter configuration optional: missing or incomplete keys/settings must disable remote calls without preventing startup.
+☒ Add local-authoritative fallback from advisory LLM work to the existing NPC behavior when the provider is unavailable or invalid.
+☒ Make OpenRouter configuration optional and explicitly enabled by `BLINGMUD_OPENROUTER_ENABLED`; missing configuration starts with no AI runtime or key read.
 ☐ Require every LLM-capable NPC to declare an FSM or simpler local fallback.
 ☐ Test that the complete MUD remains playable with no API key, no network, exhausted AI budget, and sustained provider failure.
 ☐ Keep API keys out of source control, prompts, admin output, and ordinary logs.
-☐ Add OpenRouter support behind a local adapter, with validation and a circuit breaker.
+☒ Add OpenRouter support behind a free-only local adapter with catalogue validation, rotation, per-model cooldowns, bounded responses, and circuit-breaker fallback.
 ☐ Add token/budget gating so low-priority NPCs stay on simpler behavior.
 
-OpenRouter implementation is deferred until the user explicitly authorizes it again. Local NPC and fallback work may continue without it.
+OpenRouter implementation is explicitly authorized. Live catalogue verification is presently unavailable externally; fake-transport coverage remains authoritative for local implementation work.
 
 Admin / ops
 

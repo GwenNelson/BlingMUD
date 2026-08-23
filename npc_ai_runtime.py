@@ -2,6 +2,7 @@
 
 import queue
 import threading
+import json
 
 
 class NPCAdvisorRuntime(object):
@@ -15,6 +16,7 @@ class NPCAdvisorRuntime(object):
         self.submitted = 0
         self.dropped = 0
         self.completed = 0
+        self.invalid_responses = 0
         self.worker = threading.Thread(target=self._run, name="blingmud-npc-ai", daemon=True)
         self.worker.start()
 
@@ -33,21 +35,35 @@ class NPCAdvisorRuntime(object):
         with self.lock: self.submitted += 1
         return True
 
+    def refresh_catalogue(self):
+        return self.observe({"event": "refresh_catalogue"})
+
     def _run(self):
         while True:
             frame = self.queue.get()
             if frame is None: return
-            # This initial advisory endpoint deliberately submits no player
-            # text and cannot alter FSM output. Provider failure is inert.
             try:
-                self.provider.complete([{"role": "system", "content": "Return {}"}], max_tokens=8)
+                if frame.get("event") == "refresh_catalogue":
+                    self.provider.refresh_models()
+                else:
+                    prompt = json.dumps(frame, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+                    if len(prompt) > 8192:
+                        raise ValueError("advisory frame is too large")
+                    response = self.provider.complete([
+                        {"role": "system", "content": "Choose only an offered candidate. Return JSON: {\"choice\":0}."},
+                        {"role": "user", "content": prompt}
+                    ], max_tokens=16)
+                    if response is not None:
+                        parsed = json.loads(response)
+                        if parsed != {"choice": 0}:
+                            raise ValueError("invalid advisory choice")
             except Exception:
-                pass
+                with self.lock: self.invalid_responses += 1
             with self.lock: self.completed += 1
 
     def status_snapshot(self):
         with self.lock:
-            return {"queued": self.queue.qsize(), "submitted": self.submitted, "dropped": self.dropped, "completed": self.completed, "closed": self.closed}
+            return {"queued": self.queue.qsize(), "submitted": self.submitted, "dropped": self.dropped, "completed": self.completed, "invalid_responses": self.invalid_responses, "closed": self.closed}
 
     def shutdown(self, timeout=1.0):
         with self.lock:
