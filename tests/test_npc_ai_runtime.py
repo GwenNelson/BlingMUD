@@ -20,6 +20,12 @@ class BlockingProvider(object):
         return None
 
 
+class ReplyProvider(object):
+    status = "healthy"
+    def complete(self, messages, max_tokens=8):
+        return '{"choice":0,"reply":"Well met, traveller."}'
+
+
 class RuntimeTests(unittest.TestCase):
     def test_runtime_is_bounded_and_stops(self):
         provider = Provider()
@@ -59,6 +65,29 @@ class RuntimeTests(unittest.TestCase):
             self.assertTrue(runtime.observe(frame))
             self.assertFalse(runtime.observe(frame))
             self.assertEqual(runtime.status_snapshot()["budget_rejections"], 1)
+        finally:
+            self.assertTrue(runtime.shutdown())
+
+    def test_first_valid_reply_switches_runtime_to_llm_ready(self):
+        runtime = NPCAdvisorRuntime(ReplyProvider(), workers=1, queued=2)
+        completed = threading.Event()
+        received = []
+        frame = {
+            "event": "on_say", "npc": "Knight", "room": "crossroads",
+            "candidates": [{"id": "a", "actions": [{"type": "say", "text": "Local."}]}]
+        }
+        try:
+            self.assertTrue(runtime.observe(
+                frame,
+                lambda choice, original, reply: (
+                    received.append((choice, reply)), completed.set()
+                )
+            ))
+            self.assertTrue(completed.wait(1.0))
+            self.assertEqual(received, [(0, "Well met, traveller.")])
+            self.assertTrue(runtime.status_snapshot()["llm_ready"])
+            self.assertTrue(runtime.is_ready("Knight"))
+            self.assertFalse(runtime.is_ready("Val"))
         finally:
             self.assertTrue(runtime.shutdown())
 

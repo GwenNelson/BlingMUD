@@ -24,6 +24,13 @@ class CallbackAdvisor(object):
         callback(1, frame)
 
 
+class ReplyAdvisor(CallbackAdvisor):
+    llm_ready = True
+    def observe(self, frame, callback):
+        self.frames.append(frame)
+        callback(0, frame, "A remote but bounded reply.")
+
+
 class CandidateFallback(Fallback):
     def __init__(self):
         super().__init__()
@@ -81,6 +88,20 @@ class AdvisoryFSMTests(unittest.TestCase):
         self.assertEqual(behavior.on_say(player, "hello").text, "local reply")
         self.assertEqual(behavior.on_say(player, "hello").text, "advised reply")
         self.assertEqual(len(advisor.frames), 2)
+        room.leave(player, announce=False)
+        room.remove_npc(npc)
+
+    def test_valid_remote_reply_is_emitted_on_a_later_tick(self):
+        behavior = AdvisoryFSMBehavior(CandidateFallback(), ReplyAdvisor())
+        npc = NPC("Test", "test", behavior=behavior)
+        room = Room("test", "Test", "test")
+        room.add_npc(npc)
+        player = Player("Player")
+        room.enter(player, announce=False)
+        behavior.on_say(player, "hello")
+        actions = behavior.tick()
+        self.assertEqual(actions[-1].text, "A remote but bounded reply.")
+        self.assertEqual(behavior.mode, NPCBehavior.MODE_LLM_FSM)
         room.leave(player, announce=False)
         room.remove_npc(npc)
 

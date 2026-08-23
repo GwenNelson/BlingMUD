@@ -5,7 +5,7 @@ import stat
 import tempfile
 import unittest
 
-from openrouter_provider import OpenRouterProvider
+from openrouter_provider import MAX_QUERY_LOG_BYTES, OpenRouterProvider
 
 
 class FakeResponse(object):
@@ -70,6 +70,19 @@ class OpenRouterProviderTests(unittest.TestCase):
         provider.paid_reserved = 1.0
         self.assertEqual(provider.next_model(), "free/b")
 
+    def test_preferred_paid_dialogue_model_is_selected_first(self):
+        preferred = self._model(
+            "meta-llama/llama-3.3-70b-instruct", "0.000001"
+        )
+        ordinary = self._model("paid/a", "0.0000001")
+        def opener(request, timeout):
+            return FakeResponse({"data": [ordinary, preferred]})
+        provider = OpenRouterProvider(self.directory.name, opener=opener)
+        provider.refresh_models()
+        self.assertEqual(
+            provider.next_model(), "meta-llama/llama-3.3-70b-instruct"
+        )
+
     def test_insecure_key_is_disabled(self):
         key_path = os.path.join(self.directory.name, "openrouter.key")
         os.chmod(key_path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP)
@@ -109,6 +122,56 @@ class OpenRouterProviderTests(unittest.TestCase):
             provider.refresh_models()
         self.assertEqual(self.requests, [])
         self.assertEqual(provider.status, "key_missing")
+
+    def test_raw_audit_log_excludes_key(self):
+        path = os.path.join(self.directory.name, "openrouter_queries.jsonl")
+        with open(path, "w") as handle:
+            handle.write("")
+        os.chmod(path, 0o644)
+        provider = OpenRouterProvider(self.directory.name, opener=self._opener)
+        provider.refresh_models()
+        with open(path, "r") as handle:
+            logged = handle.read()
+        self.assertIn('"event":"request"', logged)
+        self.assertIn('"event":"response"', logged)
+        self.assertNotIn("test-key", logged)
+        self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+
+    def test_full_audit_log_prevents_unlogged_remote_request(self):
+        path = os.path.join(self.directory.name, "openrouter_queries.jsonl")
+        with open(path, "wb") as handle:
+            handle.truncate(MAX_QUERY_LOG_BYTES)
+        os.chmod(path, 0o600)
+        provider = OpenRouterProvider(self.directory.name, opener=self._opener)
+        with self.assertRaises(Exception):
+            provider.refresh_models()
+        self.assertEqual(provider.status, "audit_unavailable")
+        self.assertEqual(self.requests, [])
+
+    def test_paid_request_uses_per_million_max_price_and_persists_budget(self):
+        requests = []
+        paid = self._model("paid/working", "0.000001")
+        def opener(request, timeout):
+            requests.append(request)
+            if request.full_url.endswith("/models"):
+                return FakeResponse({"data": [paid]})
+            return FakeResponse({
+                "choices": [{"message": {"content": '{"choice":0}'}}],
+                "usage": {"cost": 0.0001}
+            })
+        provider = OpenRouterProvider(self.directory.name, opener=opener)
+        provider.refresh_models()
+        self.assertEqual(provider.complete(
+            [{"role": "user", "content": "choose"}], max_tokens=8
+        ), '{"choice":0}')
+        payload = json.loads(requests[-1].data.decode("utf-8"))
+        self.assertEqual(payload["provider"]["max_price"]["prompt"], 1.0)
+        budget_path = os.path.join(
+            self.directory.name, "openrouter_budget.json"
+        )
+        self.assertEqual(stat.S_IMODE(os.stat(budget_path).st_mode), 0o600)
+        restored = OpenRouterProvider(self.directory.name, opener=opener)
+        self.assertAlmostEqual(restored.paid_reserved, 0.0001)
 
 
 if __name__ == "__main__":

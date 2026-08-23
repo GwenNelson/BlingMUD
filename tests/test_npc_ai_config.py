@@ -19,8 +19,8 @@ class AIConfigTests(unittest.TestCase):
         world = blingmud.World()
         runtime = configure_world_ai(world, {"BLINGMUD_OPENROUTER_ENABLED": "1"}, provider=Provider())
         try:
-            self.assertEqual(world.rooms["crossroads"].knight.behavior_mode, NPCBehavior.MODE_LLM_FSM)
-            self.assertEqual(world.rooms["vals_hella_holler"].val.behavior_mode, NPCBehavior.MODE_LLM_FSM)
+            self.assertEqual(world.rooms["crossroads"].knight.behavior_mode, NPCBehavior.MODE_FSM)
+            self.assertEqual(world.rooms["vals_hella_holler"].val.behavior_mode, NPCBehavior.MODE_FSM)
         finally:
             runtime.shutdown()
 

@@ -7,7 +7,7 @@
   1. Complete the village content and economy, beginning with Master Corbel, Acorn Goblets, Acorn Mash, and the Green-to-Holler gameplay loop.
   2. Add optional OpenRouter-backed NPC intelligence, beginning with Brave Sir Knight, while preserving his existing FSM behaviour exactly whenever AI is unavailable, unsuitable, or fails.
 
-  The MUD must remain fully playable without an API key, network access, or LLM service. openrouter.key must remain local-only, contain only the raw key, be ignored by Git, never appear in logs or prompts, and never be committed.
+  The MUD must remain fully playable without an API key, network access, or LLM service. openrouter.key must remain local-only, contain only the raw key, be ignored by Git, never appear in logs or prompts, and never be committed. A later explicit operator decision authorized paid-first routing under a persistent one-dollar UTC-day budget and full raw request/response logging in a separate ignored owner-only audit file; the key and authorization header remain excluded.
 
   Before every implementation phase, review the current code, known bugs, security risks, and “implemented versus planned” sections in AGENTS.md, AI_ROADMAP.md, and TODO.md. Never assume a feature exists until verified. The account-key incident is fixed locally by schema-v3 canonical-key repair and absolute database-path diagnostics, but production deployment must still compare `/adminstatus` database path, realpath, device, and inode across every server process or frontend before content work is deployed.
 
@@ -109,9 +109,9 @@
 
   ## Phase 2: Generic LLM/FSM architecture — implemented foundation
 
-  `AdvisoryFSMBehavior` wraps an existing behavior without replacing its state or output, emits a bounded structured frame only in occupied rooms, and delegates every failure to the exact local result. Explicitly enabled worlds wrap Brave Sir Knight and Val; disabled worlds construct no runtime and do not read the key. The current provider transport rejects redirects and insecure key files, validates the live catalogue within a bounded 2 MiB response, and accepts only free text models with the parameters required by its JSON-only request.
+  `AdvisoryFSMBehavior` wraps an existing behavior without replacing its state or immediate output, emits a bounded structured frame only in occupied rooms, and delegates every failure to the exact local result. Explicitly enabled worlds wrap Brave Sir Knight and Val; disabled worlds construct no runtime and do not read the key. The current provider transport rejects redirects and insecure key files, validates text-only models from a bounded 2 MiB live catalogue, prefers inexpensive paid instruction models under a persistent one-dollar UTC-day budget, and falls back to validated free models.
   The advisory runtime now uses two finite daemon workers, a 16-job mailbox, interactive priority admission, and bounded global/room/NPC request budgets. Catalogue refresh is requested from selector maintenance without network I/O on the selector thread.
-  Advisory responses are now validated choice indices for finite local candidate pools; a valid hint can affect only a later matching local choice, while stale, invalid, or unavailable hints preserve the exact fallback decision.
+  Advisory responses use validated choice indices for finite local candidate pools. Player-speech responses may also include bounded control-safe conversational text, which is queued and emitted only by the NPC actor on a later tick; stale, invalid, or unavailable results preserve the exact fallback decision.
   Brave Sir Knight's traveller memory is now bounded to 64 structured entries with deterministic eviction and capped visit counts. Knight and Val state persist as strict version-1 documents in the explicit schema-v4 `npc_state` table through a bounded dirty-only writer and safe restore.
 
   ### Core adapter
@@ -122,8 +122,8 @@
 
   - use the existing NPCBehavior, FSMBehavior, NPCAction, and NPCActor contracts;
   - treat the local FSM as authoritative;
-  - ask the LLM only to choose among explicitly generated, validated local candidates;
-  - never allow the LLM to invent arbitrary commands, state names, targets, damage, items, or persistence data;
+  - ask the LLM to choose among explicitly generated, validated local candidates and optionally provide bounded conversational speech;
+  - never allow the LLM to invent arbitrary commands, state names, targets, damage, items, persistence data, or other gameplay effects;
   - preserve exact local fallback behaviour when the LLM is disabled or fails;
   - support both simple random NPCs and stateful FSM NPCs, even though the first integrations are FSM-based;
   - expose inspectable mode/status for administrators without exposing credentials.
@@ -206,15 +206,15 @@
   - never send it to an LLM prompt;
   - never write it to operational logs, save files, crash reports, or admin status output.
 
-  Use safe defaults for endpoint, timeouts, request size, and concurrency. Permit non-secret local configuration overrides only if they remain bounded and do not undermine the free-only rule.
+  Use safe defaults for endpoint, timeouts, request size, and concurrency. Permit non-secret local configuration overrides only if they remain bounded and do not undermine catalogue validation or the paid budget.
 
-  ### Dynamic free-model discovery
+  ### Dynamic model discovery and paid budget
 
-  Use OpenRouter’s model catalogue rather than hard-coded model names. OpenRouter documents GET /api/v1/models and exposes model pricing fields, modality, context length, and supported parameters. Its pricing object includes prompt,
+  Use OpenRouter’s model catalogue as the source of truth; preferred model identifiers must never bypass live validation. OpenRouter documents GET /api/v1/models and exposes model pricing fields, modality, context length, and supported parameters. Its pricing object includes prompt,
   completion, request, reasoning, and other charge dimensions; a value of "0" represents free pricing. (OpenRouter model catalogue documentation (https://openrouter.ai/docs/api/api-reference/models/get-model), pricing and model
   metadata (https://openrouter.ai/docs/guides/overview/models))
 
-  Only accept models where every applicable billing field is exactly zero:
+  Free fallback models are accepted only when every applicable billing field is exactly zero. Paid models are accepted only when every billing field is understood, non-negative, text-only, and cheap enough for the per-request and persistent one-dollar UTC-day bounds:
 
   - prompt price;
   - completion price;
@@ -231,24 +231,24 @@
   - sufficient context length for the bounded prompt;
   - chat-completion support;
   - no tool use, browsing, image generation, or other billable features;
-  - no paid fallback routing.
+  - provider routing capped with OpenRouter's documented per-million-token price units.
 
   Do not trust a :free suffix alone. Pricing metadata is authoritative for eligibility.
 
   ### Rotation and exhaustion
 
-  Maintain a bounded in-memory free-model pool:
+  Maintain bounded in-memory paid and free-model pools:
 
   - sort eligible models by deterministic priority;
   - prefer models with recent successful calls;
   - rotate models fairly;
   - temporarily circuit-break models after timeout, rate limit, server error, malformed response, schema failure, or explicit exhaustion;
-  - retry another eligible free model only within a small per-decision attempt limit;
+  - retry another eligible model only within a small per-decision attempt limit;
   - never retry indefinitely;
-  - never fall back to a paid model;
-  - when every eligible model is unavailable, rate-limited, exhausted, or cooling down, immediately use the local FSM.
+  - prefer reliable inexpensive paid models while the persistent daily budget remains, then use free models;
+  - when every eligible model is unavailable, rate-limited, budget-exhausted, or cooling down, immediately use the local FSM.
 
-  “Runs out” means the current free pool has no usable model or the configured free request budget is exhausted. It must never mean spending credits on a paid model.
+  “Runs out” means the paid budget and current free pool have no usable model. A request must never exceed its bounded reservation or cause the persistent UTC-day total to exceed one US dollar.
 
   Refresh the catalogue at startup and at a bounded periodic interval. Refresh failures retain the last known safe pool temporarily, but never invent models or assume a model remains free after its pricing data becomes unavailable.
 
@@ -391,14 +391,14 @@
   - Missing key disables provider without network access.
   - Blank or malformed key is rejected safely.
   - openrouter.key is ignored and never staged.
-  - Paid models are rejected.
-  - Models with any non-zero or unknown billing field are rejected.
+  - Paid models use correct per-million-token routing limits and a persisted bounded reservation.
+  - Models with any unknown billing field are rejected.
   - Free model rotation is deterministic and fair.
   - 429, timeout, 5xx, malformed catalogue, malformed JSON, schema failure, and exhausted-model responses circuit-break correctly.
-  - All-free-model exhaustion falls back to FSM.
+  - Paid-budget and free-model exhaustion fall back to FSM.
   - Catalogue refresh updates the pool safely.
   - Recovery after cooldown restores provider use.
-  - No paid request is ever generated.
+  - No paid request can exceed its per-request cap or the persistent one-dollar UTC-day budget.
   - No real OpenRouter calls occur in the test suite; a separate authorized synthetic probe may validate the live catalogue and free-pool fallback without player data.
 
   ### Scheduling tests
@@ -415,9 +415,9 @@
 
   - git status --ignored confirms openrouter.key is ignored.
   - A staged-file guard rejects any attempt to stage it.
-  - Logs and admin output contain no key or raw prompt.
+  - Ordinary logs and admin output contain no key or raw prompt; the explicitly authorized ignored owner-only audit contains raw OpenRouter dialogue payloads and bodies but never the key or authorization header.
   - Static checks reject dynamic code execution and unsafe save deserialization.
-  - No actual MUD server is launched during verification.
+  - Unit and integration tests do not bind or launch the MUD server; separately authorized live provider/NPC-path probes may run without weakening bounds.
   - Every command and test run remains bounded to the agreed runtime limit.
 
   ## Documentation and delivery order

@@ -5,6 +5,7 @@ import threading
 import json
 import heapq
 import time
+import unicodedata
 from collections import deque
 
 from operational_log import log_event
@@ -41,6 +42,9 @@ class NPCAdvisorRuntime(object):
         self.dropped = 0
         self.completed = 0
         self.invalid_responses = 0
+        self.valid_responses = 0
+        self.llm_ready = False
+        self.ready_npcs = set()
         self.sequence = 0
         self.workers = []
         for index in range(workers):
@@ -54,7 +58,7 @@ class NPCAdvisorRuntime(object):
         self.worker = self.workers[0]
 
     def observe(self, frame, result_handler=None):
-        if not isinstance(frame, dict) or len(frame) > 8:
+        if not isinstance(frame, dict) or len(frame) > 10:
             raise ValueError("invalid advisory frame")
         with self.lock:
             if self.closed or (
@@ -113,6 +117,10 @@ class NPCAdvisorRuntime(object):
                 return False
             self.enabled = bool(enabled)
             return self.enabled
+
+    def is_ready(self, npc_name):
+        with self.lock:
+            return str(npc_name)[:80] in self.ready_npcs
 
     def clear_circuit(self):
         clearer = getattr(self.provider, "clear_circuit", None)
@@ -196,25 +204,47 @@ class NPCAdvisorRuntime(object):
                     if len(prompt) > 8192:
                         raise ValueError("advisory frame is too large")
                     response = self.provider.complete([
-                        {"role": "system", "content": "Choose only an offered candidate. Return JSON: {\"choice\":0}."},
+                        {"role": "system", "content": "You are the named NPC. Choose one offered candidate as a tone anchor. For player speech, directly answer the input in character in at most 240 characters; do not merely repeat a candidate unless it genuinely answers the player. Return one complete JSON object only: {\"choice\":0,\"reply\":\"bounded reply\"}. Never invent game actions, commands, items, damage, or state changes."},
                         {"role": "user", "content": prompt}
-                    ], max_tokens=16)
-                    if response is not None:
-                        parsed = json.loads(response)
-                        if (
-                            not isinstance(parsed, dict)
-                            or set(parsed) != {"choice"}
-                            or isinstance(parsed["choice"], bool)
-                            or not isinstance(parsed["choice"], int)
-                            or parsed["choice"] < 0
-                            or parsed["choice"] >= len(frame.get("candidates", ()))
+                    ], max_tokens=128)
+                    if response is None:
+                        raise ValueError("provider returned no response")
+                    parsed = json.loads(response)
+                    if not isinstance(parsed, dict) or not set(parsed).issubset(
+                        {"choice", "reply"}
+                    ) or "choice" not in parsed:
+                        raise ValueError("invalid advisory response")
+                    choice = parsed["choice"]
+                    if (
+                        isinstance(choice, bool)
+                        or not isinstance(choice, int)
+                        or choice < 0
+                        or choice >= len(frame.get("candidates", ()))
+                    ):
+                        raise ValueError("invalid advisory choice")
+                    reply = parsed.get("reply")
+                    if frame.get("event") == "on_say":
+                        if not isinstance(reply, str):
+                            raise ValueError("missing advisory reply")
+                        reply = reply.strip()
+                        if not 1 <= len(reply) <= 500 or any(
+                            unicodedata.category(character) in ("Cc", "Cf", "Cs")
+                            for character in reply
                         ):
-                            raise ValueError("invalid advisory choice")
-                        if result_handler is not None:
-                            result_handler(parsed["choice"], frame)
+                            raise ValueError("invalid advisory reply")
+                    else:
+                        reply = None
+                    with self.lock:
+                        self.valid_responses += 1
+                        self.ready_npcs.add(str(frame.get("npc", ""))[:80])
+                        self.llm_ready = bool(self.ready_npcs)
+                    if result_handler is not None:
+                        result_handler(choice, frame, reply)
             except Exception:
                 with self.lock:
                     self.invalid_responses += 1
+                    self.ready_npcs.discard(str(frame.get("npc", ""))[:80])
+                    self.llm_ready = bool(self.ready_npcs)
                 log_event(
                     "npc_ai.advisory_failure",
                     provider_status=getattr(self.provider, "status", "unknown")
@@ -229,6 +259,12 @@ class NPCAdvisorRuntime(object):
                 "dropped": self.dropped,
                 "completed": self.completed,
                 "invalid_responses": self.invalid_responses,
+                "valid_responses": self.valid_responses,
+                "llm_ready": self.llm_ready,
+                "ready_npcs": len(self.ready_npcs),
+                "paid_daily_usd": round(
+                    float(getattr(self.provider, "paid_reserved", 0.0)), 6
+                ),
                 "budget_rejections": self.budget_rejections,
                 "budget_global": len(self.global_requests),
                 "workers": len(self.workers),

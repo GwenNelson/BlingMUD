@@ -20,6 +20,15 @@ REQUEST_TIMEOUT_SECONDS = 5.0
 MODEL_COOLDOWN_SECONDS = 60.0
 DAILY_PAID_BUDGET_USD = 1.0
 MAX_PAID_RESERVATION_USD = 0.05
+QUERY_LOG_FILENAME = "openrouter_queries.jsonl"
+BUDGET_FILENAME = "openrouter_budget.json"
+MAX_QUERY_LOG_BYTES = 20 * 1024 * 1024
+MAX_AUDIT_RESPONSE_BYTES = (MAX_CHAT_RESPONSE_BYTES + 1) * 6 + 4096
+PREFERRED_PAID_MODELS = (
+    "meta-llama/llama-3.3-70b-instruct",
+    "qwen/qwen3-30b-a3b-instruct-2507",
+    "openai/gpt-3.5-turbo"
+)
 PRICING_FIELDS = frozenset((
     "prompt", "completion", "request", "image", "image_output",
     "audio", "audio_output", "web_search", "internal_reasoning",
@@ -53,6 +62,8 @@ class OpenRouterProvider(object):
         self.opener = opener or _default_opener
         self.time_source = time_source or time.monotonic
         self.lock = threading.RLock()
+        self.audit_lock = threading.Lock()
+        self.audit_reserved_bytes = 0
         self.models = []
         self.paid_models = []
         self.cooldowns = {}
@@ -61,6 +72,91 @@ class OpenRouterProvider(object):
         self.last_error = None
         self.paid_day = int(time.time() // 86400)
         self.paid_reserved = 0.0
+        self._load_budget()
+
+    def _load_budget(self):
+        path = os.path.join(self.directory, BUDGET_FILENAME)
+        try:
+            with open(path, "r") as handle:
+                document = json.load(handle)
+            if (
+                isinstance(document, dict)
+                and document.get("day") == self.paid_day
+                and isinstance(document.get("reserved_usd"), (int, float))
+                and not isinstance(document.get("reserved_usd"), bool)
+                and 0 <= document["reserved_usd"] <= DAILY_PAID_BUDGET_USD
+            ):
+                self.paid_reserved = float(document["reserved_usd"])
+        except (OSError, TypeError, ValueError):
+            pass
+
+    def _save_budget(self):
+        path = os.path.join(self.directory, BUDGET_FILENAME)
+        encoded = json.dumps({
+            "day": self.paid_day,
+            "reserved_usd": round(self.paid_reserved, 9)
+        }, separators=(",", ":")).encode("ascii")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags, 0o600)
+        try:
+            os.fchmod(descriptor, 0o600)
+            os.write(descriptor, encoded)
+        finally:
+            os.close(descriptor)
+
+    def _audit_log(
+        self, event, value, secret=None, reserve_bytes=0, release_bytes=0
+    ):
+        try:
+            document = {
+                "time": time.time(),
+                "event": event,
+                "value": value
+            }
+            encoded = json.dumps(
+                document, ensure_ascii=True, separators=(",", ":")
+            )
+            if secret:
+                encoded = encoded.replace(secret, "[REDACTED]")
+            encoded = (encoded + "\n").encode("utf-8")
+            path = os.path.join(self.directory, QUERY_LOG_FILENAME)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+            flags |= getattr(os, "O_CLOEXEC", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0)
+            with self.audit_lock:
+                self.audit_reserved_bytes = max(
+                    0, self.audit_reserved_bytes - release_bytes
+                )
+                descriptor = os.open(path, flags, 0o600)
+                try:
+                    os.fchmod(descriptor, 0o600)
+                    metadata = os.fstat(descriptor)
+                    if (
+                        metadata.st_size + self.audit_reserved_bytes
+                        + len(encoded) + reserve_bytes
+                        > MAX_QUERY_LOG_BYTES
+                    ):
+                        return False
+                    written = 0
+                    while written < len(encoded):
+                        count = os.write(descriptor, encoded[written:])
+                        if count <= 0:
+                            raise OSError("short audit write")
+                        written += count
+                    self.audit_reserved_bytes += reserve_bytes
+                    return True
+                finally:
+                    os.close(descriptor)
+        except (OSError, TypeError, ValueError, OverflowError):
+            return False
+
+    def _release_audit_reservation(self, amount):
+        with self.audit_lock:
+            self.audit_reserved_bytes = max(
+                0, self.audit_reserved_bytes - amount
+            )
 
     def _load_key(self):
         filename = os.path.join(self.directory, KEY_FILENAME)
@@ -128,9 +224,7 @@ class OpenRouterProvider(object):
         supported = model.get("supported_parameters")
         if not isinstance(supported, list):
             return False
-        if not {
-            "max_tokens", "temperature", "response_format"
-        }.issubset(supported):
+        if not {"max_tokens", "temperature"}.issubset(supported):
             return False
         return True
 
@@ -156,6 +250,7 @@ class OpenRouterProvider(object):
         if day != self.paid_day:
             self.paid_day = day
             self.paid_reserved = 0.0
+            self._save_budget()
 
     def _request_json(self, url, payload=None):
         if url not in CATALOGUE_URLS:
@@ -164,6 +259,15 @@ class OpenRouterProvider(object):
         if key is None:
             raise ProviderError(self.status)
         data = None if payload is None else json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        audit_reservation = MAX_AUDIT_RESPONSE_BYTES
+        if not self._audit_log(
+            "request",
+            {"url": url, "payload": payload},
+            secret=key,
+            reserve_bytes=audit_reservation
+        ):
+            self.status = "audit_unavailable"
+            raise ProviderError(self.status)
         request = urllib.request.Request(
             url,
             data=data,
@@ -184,7 +288,21 @@ class OpenRouterProvider(object):
             finally:
                 response.close()
         except urllib.error.HTTPError as error:
-            if error.code == 429:
+            try:
+                error_body = error.read(MAX_CHAT_RESPONSE_BYTES + 1).decode(
+                    "utf-8", "replace"
+                )
+            except Exception:
+                error_body = ""
+            audit_ok = self._audit_log(
+                "response",
+                {"url": url, "status": error.code, "body": error_body},
+                secret=key,
+                release_bytes=audit_reservation
+            )
+            if not audit_ok:
+                self.status = "audit_unavailable"
+            elif error.code == 429:
                 self.status = "rate_limited"
             elif error.code == 402:
                 self.status = "temporarily_exhausted"
@@ -195,14 +313,43 @@ class OpenRouterProvider(object):
                 )
             raise ProviderError(self.status)
         except (OSError, urllib.error.URLError):
-            self.status = "catalogue_unavailable" if payload is None else "circuit_open"
+            audit_ok = self._audit_log(
+                "response",
+                {"url": url, "status": "transport_error", "body": ""},
+                secret=key,
+                release_bytes=audit_reservation
+            )
+            self.status = (
+                "catalogue_unavailable" if payload is None else "circuit_open"
+            ) if audit_ok else "audit_unavailable"
             raise ProviderError(self.status)
+        except Exception:
+            self._release_audit_reservation(audit_reservation)
+            raise
         maximum = MAX_CATALOGUE_BYTES if payload is None else MAX_CHAT_RESPONSE_BYTES
+        response_body = data.decode("utf-8", "replace")
+        audit_ok = self._audit_log(
+            "response",
+            {
+                "url": url,
+                "status": 200,
+                "body": (
+                    response_body
+                    if payload is not None
+                    else json.dumps({"catalogue_bytes": len(data)})
+                )
+            },
+            secret=key,
+            release_bytes=audit_reservation
+        )
+        if not audit_ok:
+            self.status = "audit_unavailable"
+            raise ProviderError(self.status)
         if len(data) > maximum:
             self.status = "catalogue_unavailable" if payload is None else "circuit_open"
             raise ProviderError(self.status)
         try:
-            return json.loads(data.decode("utf-8"))
+            return json.loads(response_body)
         except (UnicodeError, ValueError):
             self.status = "catalogue_unavailable" if payload is None else "circuit_open"
             raise ProviderError(self.status)
@@ -221,7 +368,16 @@ class OpenRouterProvider(object):
             if field not in ("prompt", "completion", "request")
         )]
         free_models.sort(key=lambda model: model["id"])
-        paid_models.sort(key=lambda model: model["id"])
+        preference = {
+            identifier: index
+            for index, identifier in enumerate(PREFERRED_PAID_MODELS)
+        }
+        paid_models.sort(key=lambda model: (
+            preference.get(model["id"], len(preference)),
+            (self._price(model, "prompt") or 0.0)
+            + (self._price(model, "completion") or 0.0),
+            model["id"]
+        ))
         with self.lock:
             self.models = free_models[:MAX_MODELS]
             self.paid_models = paid_models[:MAX_MODELS]
@@ -263,14 +419,14 @@ class OpenRouterProvider(object):
             raise ValueError("messages must be a bounded non-empty list")
         if isinstance(max_tokens, bool) or not isinstance(max_tokens, int):
             raise ValueError("max_tokens must be an integer")
-        if not 1 <= max_tokens <= 64:
+        if not 1 <= max_tokens <= 192:
             raise ValueError("max_tokens is outside the bounded range")
         encoded_messages = json.dumps(
             messages, ensure_ascii=True, separators=(",", ":")
         ).encode("utf-8")
         if len(encoded_messages) > 8192:
             raise ValueError("messages are too large")
-        for unused in range(min(2, len(self.paid_models) + len(self.models))):
+        for unused in range(min(4, len(self.paid_models) + len(self.models))):
             model = self.next_model()
             if model is None:
                 return None
@@ -281,34 +437,36 @@ class OpenRouterProvider(object):
                 prompt_price = self._price(model_data, "prompt")
                 completion_price = self._price(model_data, "completion")
                 request_price = self._price(model_data, "request")
-                reservation = min(
-                    MAX_PAID_RESERVATION_USD,
+                reservation = (
                     (len(encoded_messages) / 4.0) * prompt_price
                     + max_tokens * completion_price + request_price
                 )
+                if reservation > MAX_PAID_RESERVATION_USD:
+                    with self.lock:
+                        self.cooldowns[model] = (
+                            self.time_source() + MODEL_COOLDOWN_SECONDS
+                        )
+                    continue
                 with self.lock:
                     self._reset_budget_if_needed()
                     if self.paid_reserved + reservation > DAILY_PAID_BUDGET_USD:
                         self.cooldowns[model] = self.time_source() + MODEL_COOLDOWN_SECONDS
                         continue
                     self.paid_reserved += reservation
+                    self._save_budget()
             payload = {
                 "model": model,
                 "messages": messages,
                 "max_tokens": max_tokens,
                 "temperature": 0.4,
                 "stream": False,
-                "modalities": ["text"],
-                "response_format": {"type": "json_object"},
-                "tools": [],
                 "provider": {
                     "allow_fallbacks": True,
-                    "require_parameters": True,
                     "data_collection": "deny",
                     "max_price": {
-                        "prompt": reservation if paid else 0,
-                        "completion": reservation if paid else 0,
-                        "request": reservation if paid else 0,
+                        "prompt": prompt_price * 1000000 if paid else 0,
+                        "completion": completion_price * 1000000 if paid else 0,
+                        "request": request_price if paid else 0,
                         "image": 0
                     }
                 }
@@ -326,6 +484,19 @@ class OpenRouterProvider(object):
             with self.lock:
                 self.status = "healthy"
                 self.cooldowns.pop(model, None)
+                if paid:
+                    usage = document.get("usage", {})
+                    actual = usage.get("cost") if isinstance(usage, dict) else None
+                    if (
+                        isinstance(actual, (int, float))
+                        and not isinstance(actual, bool)
+                        and 0 <= actual <= MAX_PAID_RESERVATION_USD
+                    ):
+                        self.paid_reserved = max(
+                            0.0,
+                            self.paid_reserved - reservation + float(actual)
+                        )
+                        self._save_budget()
             return content
         with self.lock:
             self.status = "temporarily_exhausted"
