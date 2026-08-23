@@ -24,5 +24,12 @@ class AIConfigTests(unittest.TestCase):
         finally:
             runtime.shutdown()
 
+    def test_world_build_and_local_npcs_work_without_provider_configuration(self):
+        world = blingmud.World()
+        self.assertIsNone(configure_world_ai(world, {}))
+        self.assertIn("village_green", world.rooms)
+        self.assertIn("smithereens", world.rooms)
+        self.assertIn("temple_of_self", world.rooms)
+
 
 if __name__ == "__main__": unittest.main()

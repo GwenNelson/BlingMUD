@@ -123,6 +123,7 @@ Connection and session runtime
 - [done: dispatch precedence] Ordinary `Room.on_command` handlers run before global fallbacks, including room aliases, and room specs take matching help/completion precedence. The reserved names `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `adminai`, `quit`, and `exit` bypass rooms even if room code tries to claim them.
 - [done: private messaging] `/tell` provides bounded control-safe private delivery through canonical active-session lookup without logging message content.
 - [done: reusable behaviors] `SimpleRandomBehavior`, `FSMBehavior`, and the advisory FSM wrapper provide reusable local and optional-LLM behavior modes.
+- [done: no-provider playability] World construction and local village NPC/room availability are covered with AI configuration absent, without network access.
 - [done: social interaction] `/hug` targets only a player in the sender's current room and emits one bounded room broadcast.
 - [partly done: Temple] The Temple of the Self now exists as a safe room with bounded mirror reflection, meditation recovery, and stable Tome text; stat respec and Self-Actualized progression remain gated work.
 - [partly done: Smithereens] The Smithereens room now has bounded scrap browsing, Eisele's local FSM, and Tackdriver's examine/listen/talk interactions; item purchasing and commissions remain gated.

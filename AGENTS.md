@@ -100,6 +100,7 @@ Project-specific guidance:
 - NPC relationship memory is optional and bounded; Brave Sir Knight's traveller memory is capped at 64 entries with deterministic eviction and bounded visit counters.
 - Persistent NPC state uses explicit version-1 JSON for the Knight and Val in the schema-v4 `npc_state` table, with a bounded dirty-only writer and safe reset on malformed state.
 - Every LLM-capable NPC must have a complete FSM or simpler fallback, and tests must cover operation with no API key and no network. Disabling advisory admission must still permit a bounded catalogue refresh request; it must not permit decision work.
+- The no-provider world-build regression must remain green: missing AI configuration cannot prevent local rooms/NPCs from loading.
 - Never hard-code, commit, prompt with, display, or ordinarily log provider API keys or other secrets.
 - Treat raised callback exceptions and non-returning callbacks as different failure modes: ordinary exceptions are reported while the actor remains usable; a deadline breach permanently selects inert fallback for that actor instance. Python cannot safely kill a stuck thread, so never create a replacement worker for an unresponsive actor or claim the stuck trusted code itself was terminated.
 - Password hashes use salted PBKDF2-SHA256; preserve verification and successful-login migration for legacy SHA-256 records until a deliberate migration removes that compatibility path.
