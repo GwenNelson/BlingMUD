@@ -57,7 +57,9 @@ class NPCAdvisorRuntime(object):
         if not isinstance(frame, dict) or len(frame) > 8:
             raise ValueError("invalid advisory frame")
         with self.lock:
-            if self.closed or not self.enabled:
+            if self.closed or (
+                not self.enabled and frame.get("event") != "refresh_catalogue"
+            ):
                 self.dropped += 1
                 return False
             if not self._budget_available(frame):

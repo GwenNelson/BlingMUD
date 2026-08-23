@@ -57,7 +57,7 @@ NPC architecture
 
 OpenRouter and failover
 
-- OpenRouter must be entirely optional. On startup and configuration reload, check for the API key and all required provider settings before constructing or enabling the remote brain client.
+- OpenRouter must be entirely optional. On startup and configuration reload, check for the API key and all required provider settings before constructing or enabling the remote brain client. A disabled runtime may still queue its bounded catalogue refresh control operation, while all decision frames remain rejected.
 - Read secrets from deployment configuration such as environment variables or an ignored local secrets file; never hard-code an API key, commit it, include it in prompts, expose it through admin output, or write it to ordinary logs.
 - If the API key or any required OpenRouter setting is absent, empty, malformed, or explicitly disabled, mark the provider as `disabled_by_config`, make no remote requests, and run every affected NPC through its declared FSM or simpler local fallback.
 - An LLM-capable NPC definition is invalid unless it also declares a complete local fallback behavior. Content loading should reject or safely downgrade definitions that would become unusable without the provider.
