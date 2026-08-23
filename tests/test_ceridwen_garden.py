@@ -53,6 +53,16 @@ class CeridwenGardenTests(unittest.TestCase):
         cottage.on_command(session, "give", "weed")
         cottage.on_command(session, "buy", "experimental")
         self.assertIn("experimental potion", session.messages[-1])
+
+        cottage.on_command(session, "buy", "salve")
+        self.assertIn("still brewing", session.messages[-1])
+        self.assertIn("unlocked experimental shelf", session.messages[-1])
+
+        cottage.on_command(session, "give", "weed")
+        self.assertIn("already unlocked", session.messages[-1])
+
+        cottage.on_command(session, "buy", "mystery")
+        self.assertIn("experimental shelf is unlocked", session.messages[-1])
         cottage.leave(player, announce=False)
 
     def test_rare_weed_round_trips_through_explicit_player_template(self):

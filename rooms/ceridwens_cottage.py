@@ -33,7 +33,18 @@ class CeridwensCottage(Room):
                     session.send("Ceridwen sells one bounded experimental potion.")
                 return True
             if target not in ("salve", "antitoxin"):
-                session.send("Ceridwen offers bounded salves and antitoxins; experimental stock is locked.")
+                if self.experimental_unlocked:
+                    session.send(
+                        "Ceridwen's experimental shelf is unlocked; try "
+                        "/buy experimental while the other remedies brew."
+                    )
+                else:
+                    session.send("Ceridwen offers bounded salves and antitoxins; experimental stock is locked.")
+            elif self.experimental_unlocked:
+                session.send(
+                    "The salves and antitoxins are still brewing. Ceridwen "
+                    "points to the unlocked experimental shelf instead."
+                )
             else:
                 session.send("Ceridwen taps the pot. Bring a rare weed before she sells that remedy.")
             return True
@@ -43,7 +54,12 @@ class CeridwensCottage(Room):
                 return True
             weed = next((item for item in session.player.inventory if isinstance(item, RareWeed)), None)
             if weed is None:
-                session.send("Ceridwen needs a rare weed before she can unlock experimental stock.")
+                if self.experimental_unlocked:
+                    session.send(
+                        "Ceridwen's experimental shelf is already unlocked."
+                    )
+                else:
+                    session.send("Ceridwen needs a rare weed before she can unlock experimental stock.")
             else:
                 session.player.inventory.remove(weed)
                 self.experimental_unlocked = True
