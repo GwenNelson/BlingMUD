@@ -80,7 +80,7 @@ NPCs
 ☒ Re-express Brave Sir Knight's state machine through `FSMBehavior`, with a thin NPC entity and behavior-owned state/content.
 ☒ Add a comprehensive Brave Sir Knight characterization suite covering all states, chore paths, greetings, farewells, memory, timing, invalid-state recovery, empty-room behavior, random output branches, and concurrent decisions.
 ☒ Add the Suspicious Alley bin-possum encounter with local FSM behavior, safe hat tribute in both natural command orders, accurate `/get` feedback, speech reactions, and one-per-player keepsakes.
-☐ Make NPC memory structured and optional.
+☒ Make NPC memory structured and optional; Knight traveller memory is capped at 64 entries with bounded snapshots.
 ☒ Add local-authoritative fallback from advisory LLM work to the existing NPC behavior when the provider is unavailable or invalid.
 ☒ Make OpenRouter configuration optional and explicitly enabled by `BLINGMUD_OPENROUTER_ENABLED`; missing configuration starts with no AI runtime or key read.
 ☒ Require every LLM-capable NPC to declare an FSM or simpler local fallback, and constrain advisory responses to validated local choice indices.

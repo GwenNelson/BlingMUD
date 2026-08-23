@@ -20,6 +20,8 @@ class BraveSirKnightBehavior(FSMBehavior):
         "south",
         "west"
     )
+    MAX_TRAVELLERS = 64
+    MAX_VISITS = 1000000
 
     def __init__(self):
         self._decision_state = threading.local()
@@ -266,6 +268,44 @@ class BraveSirKnightBehavior(FSMBehavior):
             self.STATE_PATROL,
             time_source=time.time
         )
+
+    def _remember_traveller(self, key, player, now):
+        traveller = self.known_travellers.get(key)
+        if traveller is not None:
+            return traveller
+        if len(self.known_travellers) >= self.MAX_TRAVELLERS:
+            victim_key, unused = min(
+                self.known_travellers.items(),
+                key=lambda item: (
+                    item[1].get("last_entered") or 0.0,
+                    item[1].get("last_left") or 0.0,
+                    item[1].get("visits", 0),
+                    item[0]
+                )
+            )
+            self.known_travellers.pop(victim_key, None)
+        traveller = {
+            "name": player.name[:21],
+            "visits": 0,
+            "present": False,
+            "last_entered": None,
+            "last_left": now
+        }
+        self.known_travellers[key] = traveller
+        return traveller
+
+    def memory_snapshot(self):
+        with self._state_lock:
+            result = {}
+            for key, value in sorted(self.known_travellers.items())[:self.MAX_TRAVELLERS]:
+                result[key[:64]] = {
+                    "name": str(value.get("name", ""))[:21],
+                    "visits": min(max(int(value.get("visits", 0)), 0), self.MAX_VISITS),
+                    "present": bool(value.get("present", False)),
+                    "last_entered": value.get("last_entered"),
+                    "last_left": value.get("last_left")
+                }
+            return result
 
     @property
     def state(self):
@@ -1079,23 +1119,14 @@ class BraveSirKnightBehavior(FSMBehavior):
         now = time.time()
 
         with self._state_lock:
-            traveller = self.known_travellers.get(key)
-
-            if traveller is None:
-                traveller = {
-                    "name": player.name,
-                    "visits": 0,
-                    "present": False,
-                    "last_entered": None,
-                    "last_left": None
-                }
-
-                self.known_travellers[key] = traveller
+            traveller = self._remember_traveller(key, player, now)
 
             returning = traveller["visits"] > 0
 
             traveller["name"] = player.name
-            traveller["visits"] += 1
+            traveller["visits"] = min(
+                traveller["visits"] + 1, self.MAX_VISITS
+            )
             traveller["present"] = True
             traveller["last_entered"] = now
 
@@ -1130,21 +1161,12 @@ class BraveSirKnightBehavior(FSMBehavior):
         now = time.time()
 
         with self._state_lock:
-            traveller = self.known_travellers.get(key)
-
-            if traveller is None:
-                traveller = {
-                    "name": player.name,
-                    "visits": 1,
-                    "present": False,
-                    "last_entered": None,
-                    "last_left": now
-                }
-
-                self.known_travellers[key] = traveller
-            else:
-                traveller["present"] = False
-                traveller["last_left"] = now
+            was_known = key in self.known_travellers
+            traveller = self._remember_traveller(key, player, now)
+            if not was_known:
+                traveller["visits"] = 1
+            traveller["present"] = False
+            traveller["last_left"] = now
 
         # Departures are announced immediately because the room may have no
         # players left by the next NPC tick.

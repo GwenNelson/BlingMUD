@@ -704,6 +704,18 @@ class BraveSirKnightCharacterizationTests(unittest.TestCase):
             ]
         )
 
+    def test_traveller_memory_has_a_finite_deterministic_bound(self):
+        for index in range(self.knight.MAX_TRAVELLERS + 4):
+            self.now += 1
+            self.knight.on_player_leave(Player("traveller{0}".format(index)))
+        self.assertEqual(
+            len(self.knight.known_travellers),
+            self.knight.MAX_TRAVELLERS
+        )
+        self.assertNotIn("traveller0", self.knight.known_travellers)
+        snapshot = self.knight.behavior.memory_snapshot()
+        self.assertEqual(len(snapshot), self.knight.MAX_TRAVELLERS)
+
     def test_speech_and_emote_observation_remain_no_ops(self):
         before = dict(self.knight.known_travellers)
 
