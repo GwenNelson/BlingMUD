@@ -84,9 +84,12 @@ class OpenRouterProvider(object):
                 and document.get("day") == self.paid_day
                 and isinstance(document.get("reserved_usd"), (int, float))
                 and not isinstance(document.get("reserved_usd"), bool)
-                and 0 <= document["reserved_usd"] <= DAILY_PAID_BUDGET_USD
+                and document["reserved_usd"] >= 0
             ):
-                self.paid_reserved = float(document["reserved_usd"])
+                self.paid_reserved = min(
+                    float(document["reserved_usd"]),
+                    DAILY_PAID_BUDGET_USD
+                )
         except (OSError, TypeError, ValueError):
             pass
 
@@ -437,8 +440,11 @@ class OpenRouterProvider(object):
                 prompt_price = self._price(model_data, "prompt")
                 completion_price = self._price(model_data, "completion")
                 request_price = self._price(model_data, "request")
+                # The payload is ASCII JSON. One byte per prompt token is a
+                # conservative tokenizer-independent ceiling; the former
+                # four-bytes-per-token estimate was typical, not a hard cap.
                 reservation = (
-                    (len(encoded_messages) / 4.0) * prompt_price
+                    len(encoded_messages) * prompt_price
                     + max_tokens * completion_price + request_price
                 )
                 if reservation > MAX_PAID_RESERVATION_USD:
@@ -492,9 +498,13 @@ class OpenRouterProvider(object):
                         and not isinstance(actual, bool)
                         and 0 <= actual <= MAX_PAID_RESERVATION_USD
                     ):
-                        self.paid_reserved = max(
-                            0.0,
-                            self.paid_reserved - reservation + float(actual)
+                        self.paid_reserved = min(
+                            DAILY_PAID_BUDGET_USD,
+                            max(
+                                0.0,
+                                self.paid_reserved - reservation
+                                + float(actual)
+                            )
                         )
                         self._save_budget()
             return content

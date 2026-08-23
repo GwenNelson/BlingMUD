@@ -3,9 +3,14 @@ import json
 import os
 import stat
 import tempfile
+import time
 import unittest
 
-from openrouter_provider import MAX_QUERY_LOG_BYTES, OpenRouterProvider
+from openrouter_provider import (
+    DAILY_PAID_BUDGET_USD,
+    MAX_QUERY_LOG_BYTES,
+    OpenRouterProvider
+)
 
 
 class FakeResponse(object):
@@ -69,6 +74,59 @@ class OpenRouterProviderTests(unittest.TestCase):
         provider.refresh_models()
         provider.paid_reserved = 1.0
         self.assertEqual(provider.next_model(), "free/b")
+
+    def test_paid_prompt_reservation_uses_strict_ascii_byte_ceiling(self):
+        requests = []
+        paid = self._model("paid/dense", "0.000001")
+        free = self._model("free/fallback", "0")
+
+        def opener(request, timeout):
+            requests.append(request)
+            if request.full_url.endswith("/models"):
+                return FakeResponse({"data": [paid, free]})
+            return FakeResponse({
+                "choices": [{"message": {"content": '{"choice":0}'}}],
+                "usage": {"cost": 0.0}
+            })
+
+        provider = OpenRouterProvider(self.directory.name, opener=opener)
+        provider.refresh_models()
+        provider.paid_reserved = DAILY_PAID_BUDGET_USD - 0.0001
+
+        self.assertEqual(
+            provider.complete(
+                [{"role": "user", "content": "x" * 100}],
+                max_tokens=1
+            ),
+            '{"choice":0}'
+        )
+        payload = json.loads(requests[-1].data.decode("utf-8"))
+        self.assertEqual(payload["model"], "free/fallback")
+        self.assertLessEqual(
+            provider.paid_reserved,
+            DAILY_PAID_BUDGET_USD
+        )
+
+    def test_over_limit_persisted_budget_fails_closed_at_daily_cap(self):
+        budget_path = os.path.join(
+            self.directory.name, "openrouter_budget.json"
+        )
+        with open(budget_path, "w") as handle:
+            json.dump({
+                "day": int(time.time() // 86400),
+                "reserved_usd": DAILY_PAID_BUDGET_USD + 10.0
+            }, handle)
+        os.chmod(budget_path, 0o600)
+
+        provider = OpenRouterProvider(
+            self.directory.name,
+            opener=self._opener
+        )
+
+        self.assertEqual(
+            provider.paid_reserved,
+            DAILY_PAID_BUDGET_USD
+        )
 
     def test_preferred_paid_dialogue_model_is_selected_first(self):
         preferred = self._model(

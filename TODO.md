@@ -89,6 +89,7 @@ NPCs
 ☒ Keep API keys out of source control, prompts, admin output, and ordinary logs.
 ☒ Add OpenRouter support behind a bounded paid-first adapter with catalogue validation, a hard one-dollar daily reservation cap, free-model fallback, rotation, per-model cooldowns, bounded responses, redirect rejection, owner-only key validation, and circuit-breaker fallback.
 ☒ Fix paid routing price units, prefer a reliable inexpensive instruction model, persist the UTC-day budget, and prove a real Knight query reaches `llm_fsm` only after a validated response.
+☒ Make paid prompt reservations tokenizer-independent and fail an over-limit persisted OpenRouter ledger closed at the one-dollar daily cap instead of reopening spend.
 ☒ Add ignored owner-only raw OpenRouter request/response audit logging without authorization headers or API-key leakage, and fail closed to local FSM before calls that cannot reserve a complete audit pair.
 ☒ Make OpenRouter dialogue use the bounded Knight/Val persona templates, speaker identity, and three-exchange conversational context; withhold canned candidate text from speech prompts to stop generic parroting, and preserve an immediate intent-aware FSM farewell.
 ☒ Give Val a bounded generic speech fallback so every ordinary utterance reaches local dialogue without AI and supplies a validated OpenRouter reply slot in live advisory mode.
