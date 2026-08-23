@@ -1811,12 +1811,14 @@ class NPC(Entity):
         if self.behavior is behavior:
             return
 
-        behavior.bind(self)
         previous_behavior = self.behavior
-        self.behavior = behavior
-
-        if previous_behavior is not None:
+        # A wrapper may deliberately own the previous behavior as its
+        # fallback. Bind that pair without unbinding the fallback afterward.
+        owns_previous = getattr(behavior, "fallback", None) is previous_behavior
+        behavior.bind(self)
+        if previous_behavior is not None and not owns_previous:
             previous_behavior.unbind(self)
+        self.behavior = behavior
 
     def _run_behavior_direct(self, method_name, *arguments):
         callback = getattr(self.behavior, method_name)

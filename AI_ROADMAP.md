@@ -125,6 +125,7 @@ Connection and session runtime
 - [done: reusable behaviors] `SimpleRandomBehavior`, `FSMBehavior`, and the advisory FSM wrapper provide reusable local and optional-LLM behavior modes.
 - [done: no-provider playability] World construction and local village NPC/room availability are covered with AI configuration absent, without network access.
 - [done: Knight chat reply] Brave Sir Knight now answers bounded player speech immediately from local candidate pools; optional advisory selection remains local-authoritative and can affect later matching replies only.
+- [done: wrapper binding] NPC behavior replacement preserves wrapper-owned fallback bindings, so provider failure still reaches the local Knight FSM.
 - [done: social interaction] `/hug` targets only a player in the sender's current room and emits one bounded room broadcast.
 - [partly done: Temple] The Temple of the Self now exists as a safe room with bounded mirror reflection, meditation recovery, and stable Tome text; stat respec and Self-Actualized progression remain gated work.
 - [partly done: Smithereens] The Smithereens room now has bounded scrap browsing, Eisele's local FSM, and Tackdriver's examine/listen/talk interactions; item purchasing and commissions remain gated.

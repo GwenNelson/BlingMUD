@@ -1,7 +1,7 @@
 import unittest
 
 import blingmud
-from core import NPCBehavior
+from core import NPCBehavior, Player
 from npc_ai_config import configure_world_ai
 
 
@@ -30,6 +30,30 @@ class AIConfigTests(unittest.TestCase):
         self.assertIn("village_green", world.rooms)
         self.assertIn("smithereens", world.rooms)
         self.assertIn("temple_of_self", world.rooms)
+
+    def test_wrapped_knight_fallback_remains_bound_and_replies(self):
+        class Session(object):
+            def __init__(self): self.messages = []
+            def send(self, message): self.messages.append(message)
+        world = blingmud.World()
+        runtime = configure_world_ai(
+            world,
+            {"BLINGMUD_OPENROUTER_ENABLED": "1"},
+            provider=Provider()
+        )
+        try:
+            player = Player("Visitor")
+            player.session = Session()
+            room = world.rooms["crossroads"]
+            room.enter(player, announce=False)
+            room.notify_player_said(player, "Hello Knight")
+            self.assertTrue(player.session.messages)
+            self.assertTrue(any(
+                phrase in player.session.messages[-1]
+                for phrase in ("Greetings", "Well met", "Hail and welcome")
+            ))
+        finally:
+            runtime.shutdown()
 
 
 if __name__ == "__main__": unittest.main()

@@ -82,6 +82,7 @@ NPCs
 ☒ Add the Suspicious Alley bin-possum encounter with local FSM behavior, safe hat tribute in both natural command orders, accurate `/get` feedback, speech reactions, and one-per-player keepsakes.
 ☒ Make NPC memory structured and optional; Knight traveller memory is capped at 64 entries with bounded snapshots.
 ☒ Add local-authoritative fallback from advisory LLM work to the existing NPC behavior when the provider is unavailable or invalid.
+☒ Preserve wrapper-owned fallback bindings during NPC behavior installation and replacement.
 ☒ Make OpenRouter configuration optional and explicitly enabled by `BLINGMUD_OPENROUTER_ENABLED`; missing configuration starts with no AI runtime or key read.
 ☒ Require every LLM-capable NPC to declare an FSM or simpler local fallback, and constrain advisory responses to validated local choice indices.
 ☒ Test that the complete MUD remains playable with no API key or network; local-world coverage passes. Knight chat now has an immediate local response even when advisory work is unavailable. Exhausted-budget and sustained-provider-failure paths remain covered by focused runtime tests and should receive a broader gameplay scenario later.
