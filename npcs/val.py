@@ -112,6 +112,30 @@ class ValBehavior(FSMBehavior):
         }
         FSMBehavior.__init__(self, states, self.STATE_HOSTING)
 
+    def persistent_state(self, npc_id):
+        if npc_id != "val":
+            raise ValueError("invalid Val persistence id")
+        return {
+            "version": 1,
+            "npc_id": npc_id,
+            "state": self.current_state,
+            "resources": {
+                "last_wisp_harm_seen": self.last_wisp_harm_seen
+            },
+            "memory": {}
+        }
+
+    def restore_persistent_state(self, document):
+        if document.get("npc_id") != "val":
+            raise ValueError("invalid Val persistence id")
+        if document["state"] not in self.states:
+            raise ValueError("invalid Val state")
+        self.set_state(document["state"])
+        self.last_wisp_harm_seen = min(
+            max(int(document["resources"]["last_wisp_harm_seen"]), 0),
+            1000000
+        )
+
 
 class Val(NPC):
     def __init__(self, village_state):

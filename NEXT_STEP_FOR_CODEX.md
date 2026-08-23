@@ -112,7 +112,7 @@
   `AdvisoryFSMBehavior` wraps an existing behavior without replacing its state or output, emits a bounded structured frame only in occupied rooms, and delegates every failure to the exact local result. Explicitly enabled worlds wrap Brave Sir Knight and Val; disabled worlds construct no runtime and do not read the key. The current provider transport rejects redirects and insecure key files, validates the live catalogue within a bounded 2 MiB response, and accepts only free text models with the parameters required by its JSON-only request.
   The advisory runtime now uses two finite daemon workers, a 16-job mailbox, interactive priority admission, and bounded global/room/NPC request budgets. Catalogue refresh is requested from selector maintenance without network I/O on the selector thread.
   Advisory responses are now validated choice indices for finite local candidate pools; a valid hint can affect only a later matching local choice, while stale, invalid, or unavailable hints preserve the exact fallback decision.
-  Brave Sir Knight's traveller memory is now bounded to 64 structured entries with deterministic eviction and capped visit counts; durable NPC-state storage remains to be added.
+  Brave Sir Knight's traveller memory is now bounded to 64 structured entries with deterministic eviction and capped visit counts. Knight and Val state persist as strict version-1 documents in the explicit schema-v4 `npc_state` table through a bounded dirty-only writer and safe restore.
 
   ### Core adapter
 

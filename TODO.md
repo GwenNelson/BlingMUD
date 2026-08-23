@@ -58,7 +58,7 @@ Core engine
 ☒ Route selector-era character writes through one 64-key bounded, per-player coalescing persistence writer; retry after failures and wait for a queued final snapshot on disconnect.
 ☒ Make immediate persistence-queue rejection notify bookkeeping callbacks so rejected character/world snapshots remain retryable.
 ☒ Give graceful shutdown one ten-second gameplay/persistence deadline and report workers or writes that do not finish instead of waiting indefinitely.
-☐ Add persistent IDs and templates for rooms, items, and world objects where needed.
+☒ Add persistent IDs and templates for rooms, items, and world objects where needed.
   ☒ Add stable room IDs and a strict template whitelist for the currently persistable pimp hat, royal possum bottle cap, giant acorn, Val's healing potion, Valkyrie mead, and horn-born special.
   ☐ Register each future persistent item explicitly as its content patch lands; never deserialize arbitrary class names.
 ☒ Add room-aware NPC activity snapshots and make the global manager skip detached and empty-room NPCs regardless of behavior type.

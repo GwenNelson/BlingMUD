@@ -398,6 +398,20 @@ class PlayerStateDatabaseTests(unittest.TestCase):
         self.assertEqual(status["schema"], blingmud.DATABASE_SCHEMA_VERSION)
         self.assertEqual(status["accounts"], 0)
 
+    def test_schema_four_creates_the_explicit_npc_state_table(self):
+        connection = sqlite3.connect(self.database_path)
+        try:
+            columns = tuple(row[1] for row in connection.execute(
+                "PRAGMA table_info(npc_state)"
+            ).fetchall())
+            version = connection.execute(
+                "PRAGMA user_version"
+            ).fetchone()[0]
+        finally:
+            connection.close()
+        self.assertEqual(columns, ("npc_id", "json_state"))
+        self.assertEqual(version, blingmud.DATABASE_SCHEMA_VERSION)
+
     def test_schema_three_repairs_an_unambiguous_stale_account_key(self):
         connection = sqlite3.connect(self.database_path)
 

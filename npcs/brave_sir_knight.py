@@ -307,6 +307,42 @@ class BraveSirKnightBehavior(FSMBehavior):
                 }
             return result
 
+    def persistent_state(self, npc_id):
+        if npc_id != "brave_sir_knight":
+            raise ValueError("invalid Knight persistence id")
+        with self._state_lock:
+            return {
+                "version": 1,
+                "npc_id": npc_id,
+                "state": self.current_state,
+                "resources": {
+                    "fire_strength": self.fire_strength,
+                    "firewood": self.firewood,
+                    "waterskin_full": 1 if self.waterskin_full else 0,
+                    "has_axe": 1 if self.has_axe else 0,
+                    "patrol_direction_index": self._patrol_direction_index
+                },
+                "memory": self.memory_snapshot()
+            }
+
+    def restore_persistent_state(self, document):
+        if document.get("npc_id") != "brave_sir_knight":
+            raise ValueError("invalid Knight persistence id")
+        if document["state"] not in self.states:
+            raise ValueError("invalid Knight state")
+        resources = document["resources"]
+        with self._state_lock:
+            self.current_state = document["state"]
+            self.fire_strength = min(max(float(resources["fire_strength"]), 0.0), 100.0)
+            self.firewood = min(max(int(resources["firewood"]), 0), 100)
+            self.waterskin_full = bool(resources["waterskin_full"])
+            self.has_axe = bool(resources["has_axe"])
+            self._patrol_direction_index = int(resources["patrol_direction_index"]) % len(self.PATROL_DIRECTIONS)
+            self.known_travellers = {
+                key: dict(value, present=False)
+                for key, value in document["memory"].items()
+            }
+
     @property
     def state(self):
         return self.current_state

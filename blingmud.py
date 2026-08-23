@@ -27,6 +27,7 @@ from persistence_runtime import (
     PersistenceWriter,
     WorldSaveCoordinator
 )
+from npc_state import NPCStateSaveCoordinator
 from status_runtime import STATUS_INTERVAL_SECONDS, StatusCoordinator
 from telnet_parser import (
     BackspaceInputEvent,
@@ -55,9 +56,15 @@ from world_state import (
     restore_world_state,
     validate_world_state_json
 )
+from npc_state import (
+    NPCStateError,
+    restore_npc_state,
+    serialize_npc_state,
+    validate_npc_state_json
+)
 
 USERS_DB = 'users.sqlite'
-DATABASE_SCHEMA_VERSION = 3
+DATABASE_SCHEMA_VERSION = 4
 HOST = "0.0.0.0"
 PORT = 4000
 
@@ -80,6 +87,8 @@ STATUS_COORDINATOR = None
 WORLD_STATE_WRITER = None
 WORLD_SAVE_COORDINATOR = None
 AI_RUNTIME = None
+NPC_STATE_WRITER = None
+NPC_STATE_COORDINATOR = None
 
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PASSWORD_HASH_ITERATIONS = 600000
@@ -120,7 +129,8 @@ def _validate_database_schema(cursor):
             "password_hash",
             "json_state"
         ),
-        "world_state": ("state_key", "json_state")
+        "world_state": ("state_key", "json_state"),
+        "npc_state": ("npc_id", "json_state")
     }
 
     for table_name, expected_columns in expected_tables.items():
@@ -358,12 +368,21 @@ def init_user_database():
                 ("village", new_world_state_json())
             )
 
-        _validate_database_schema(cursor)
-
         if current_version < 3:
             _repair_account_keys(cursor)
         else:
             _validate_account_keys(cursor)
+
+        if current_version < 4:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS npc_state (
+                    npc_id TEXT PRIMARY KEY,
+                    json_state TEXT NOT NULL
+                )
+            """)
+            pass
+
+        _validate_database_schema(cursor)
 
         cursor.execute(
             "PRAGMA user_version = {0}".format(DATABASE_SCHEMA_VERSION)
@@ -558,6 +577,41 @@ def persist_world_state(state_key, encoded_state):
     """Write one validated world snapshot through the shared DB lock."""
     with USERS_LOCK:
         update_world_state(state_key, encoded_state)
+
+
+def load_npc_state(npc_id):
+    if npc_id not in ("brave_sir_knight", "val"):
+        raise NPCStateError("unknown NPC state id")
+    connection = sqlite3.connect(USERS_DB)
+    try:
+        row = connection.execute(
+            "SELECT json_state FROM npc_state WHERE npc_id=?", (npc_id,)
+        ).fetchone()
+        return None if row is None else row[0]
+    finally:
+        connection.close()
+
+
+def update_npc_state(npc_id, encoded_state):
+    if npc_id not in ("brave_sir_knight", "val"):
+        raise NPCStateError("unknown NPC state id")
+    validate_npc_state_json(encoded_state)
+    connection = sqlite3.connect(USERS_DB)
+    try:
+        cursor = connection.cursor()
+        cursor.execute(
+            "INSERT INTO npc_state (npc_id, json_state) VALUES (?, ?) "
+            "ON CONFLICT(npc_id) DO UPDATE SET json_state=excluded.json_state",
+            (npc_id, encoded_state)
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def persist_npc_state(npc_id, encoded_state):
+    with USERS_LOCK:
+        update_npc_state(npc_id, encoded_state)
 
 
 def active_sessions_snapshot():
@@ -2866,6 +2920,8 @@ def main():
     global WORLD_STATE_WRITER
     global WORLD_SAVE_COORDINATOR
     global AI_RUNTIME
+    global NPC_STATE_WRITER
+    global NPC_STATE_COORDINATOR
 
     try:
         host, port = configured_server_address()
@@ -2906,6 +2962,36 @@ def main():
         )
 
     WORLD.synchronize_persisted_state()
+    npc_behaviors = {
+        "brave_sir_knight": WORLD.rooms["crossroads"].knight.behavior,
+        "val": WORLD.rooms["vals_hella_holler"].val.behavior
+    }
+    stored_npc_states = {}
+    for npc_id, behavior in npc_behaviors.items():
+        try:
+            encoded_state = load_npc_state(npc_id)
+            if encoded_state is not None:
+                restore_npc_state(behavior, encoded_state)
+                stored_npc_states[npc_id] = encoded_state
+        except (sqlite3.Error, NPCStateError, ValueError, TypeError) as error:
+            log_exception(
+                "persistence.npc_load",
+                error,
+                npc_id=npc_id,
+                result="invalid_state_reset"
+            )
+
+    NPC_STATE_WRITER = PersistenceWriter(
+        persist_npc_state,
+        pending_key_limit=2,
+        thread_name="blingmud-npc-persistence"
+    )
+    NPC_STATE_WRITER.start()
+    NPC_STATE_COORDINATOR = NPCStateSaveCoordinator(
+        npc_behaviors,
+        NPC_STATE_WRITER,
+        persisted=stored_npc_states
+    )
     AI_RUNTIME = configure_world_ai(
         WORLD,
         environ=os.environ,
@@ -2964,6 +3050,7 @@ def main():
     server.add_maintenance_callback(STATUS_COORDINATOR.tick)
     server.add_maintenance_callback(WORLD_SAVE_COORDINATOR.tick)
     server.add_maintenance_callback(AUTOSAVE_COORDINATOR.tick)
+    server.add_maintenance_callback(NPC_STATE_COORDINATOR.tick)
     if AI_RUNTIME is not None:
         server.add_maintenance_callback(AI_RUNTIME.maintenance)
 
@@ -2974,6 +3061,10 @@ def main():
         if AI_RUNTIME is not None:
             AI_RUNTIME.shutdown(1.0)
             AI_RUNTIME = None
+        if NPC_STATE_WRITER is not None:
+            NPC_STATE_WRITER.shutdown(1.0)
+            NPC_STATE_WRITER = None
+            NPC_STATE_COORDINATOR = None
         PERSISTENCE_WRITER.shutdown(GRACEFUL_FLUSH_SECONDS)
         WORLD_STATE_WRITER.shutdown(GRACEFUL_FLUSH_SECONDS)
         PERSISTENCE_WRITER = None
@@ -3071,6 +3162,23 @@ def main():
             )
 
         remaining = max(0.0, deadline - time.monotonic())
+        npc_save_result = NPC_STATE_COORDINATOR.save_if_changed(
+            wait=True,
+            timeout=remaining
+        )
+        if npc_save_result not in ("saved", "unchanged"):
+            sys.stderr.write(
+                "NPC-state final save did not finish successfully: {0}.\n".format(
+                    npc_save_result
+                )
+            )
+            log_event(
+                "server.shutdown_timeout",
+                component="npc_state_save",
+                result=npc_save_result
+            )
+
+        remaining = max(0.0, deadline - time.monotonic())
 
         if not PERSISTENCE_WRITER.flush(remaining):
             sys.stderr.write(
@@ -3114,11 +3222,26 @@ def main():
                 component="world_persistence_writer"
             )
 
+        remaining = max(0.0, deadline - time.monotonic())
+        if not NPC_STATE_WRITER.flush(remaining):
+            log_event(
+                "server.shutdown_timeout",
+                component="npc_state_flush"
+            )
+        remaining = max(0.0, deadline - time.monotonic())
+        if not NPC_STATE_WRITER.shutdown(remaining):
+            log_event(
+                "server.shutdown_timeout",
+                component="npc_state_writer"
+            )
+
         PERSISTENCE_WRITER = None
         AUTOSAVE_COORDINATOR = None
         STATUS_COORDINATOR = None
         WORLD_STATE_WRITER = None
         WORLD_SAVE_COORDINATOR = None
+        NPC_STATE_WRITER = None
+        NPC_STATE_COORDINATOR = None
         log_event("server.stopped", result=("clean" if exit_code == 0 else "error"))
 
     return exit_code
