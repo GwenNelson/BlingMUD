@@ -3,6 +3,7 @@ import unittest
 import blingmud
 from core import COMMANDS, FSMBehavior, MAX_INTOXICATION, Player
 from items.drinks import HornBornSpecial, ValHealingPotion, ValkyrieMead
+from llm_fsm import AdvisoryFSMBehavior
 from rooms.vals_hella_holler import ValsHellaHoller
 from village_state import VillageState
 
@@ -10,6 +11,24 @@ from village_state import VillageState
 class FixedRandom(object):
     def choice(self, choices):
         return choices[0]
+
+
+class ReadyReplyAdvisor(object):
+    supports_callbacks = True
+    llm_ready = True
+
+    def __init__(self):
+        self.frames = []
+
+    def observe(self, frame, callback):
+        self.frames.append(frame)
+        callback(
+            0,
+            frame,
+            "The cats are excellent judges of character and terrible judges "
+            "of personal space."
+        )
+        return True
 
 
 class RecordingSession(object):
@@ -96,6 +115,37 @@ class ValsHellaHollerTests(unittest.TestCase):
         self.session.messages = []
         self.room.notify_player_said(self.player, "May I order mead?")
         self.assertIn("/order", self.transcript())
+
+        self.session.messages = []
+        self.room.notify_player_said(
+            self.player,
+            "What makes this place feel like home?"
+        )
+        self.assertIn("I am listening", self.transcript())
+
+    def test_live_advisory_val_answers_speech_without_fsm_keywords(self):
+        advisor = ReadyReplyAdvisor()
+        self.room.val.set_behavior(
+            AdvisoryFSMBehavior(self.room.val.behavior, advisor)
+        )
+        self.session.messages = []
+
+        self.room.notify_player_said(
+            self.player,
+            "And what makes the cats special?"
+        )
+
+        self.assertEqual(self.session.messages, [])
+        self.assertEqual(len(advisor.frames), 1)
+        self.assertEqual(advisor.frames[0]["event"], "on_say")
+        self.assertEqual(
+            advisor.frames[0]["input"],
+            "And what makes the cats special?"
+        )
+
+        self.room.val.tick()
+
+        self.assertIn("excellent judges of character", self.transcript())
 
     def test_ordering_creates_bounded_concrete_drinks_with_two_actions(self):
         cases = (

@@ -97,6 +97,13 @@ class ValBehavior(FSMBehavior):
                                 "Hail! Val is short for Valkyrie, and tavern "
                                 "work beats dying gloriously before breakfast."
                             )
+                        },
+                        {
+                            "actions": NPCAction.say(
+                                "I am listening. Say what is on your mind, "
+                                "and we will see whether it calls for wisdom, "
+                                "mead, or both."
+                            )
                         }
                     )
                 },
