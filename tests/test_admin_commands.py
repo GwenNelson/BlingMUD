@@ -236,6 +236,29 @@ class AdminCommandTests(unittest.TestCase):
         self.assertIn("enabled", transcript)
         self.assertNotIn("key", transcript.lower())
 
+    def test_adminai_inspect_reports_only_bounded_npc_metadata(self):
+        class Provider(object):
+            status = "healthy"
+        class Behavior(object):
+            def persistent_state(self, npc_id):
+                return {
+                    "state": "working", "resources": {"x": 1},
+                    "memory": {"traveller": "private name"}
+                }
+        class NPC(object):
+            behavior = Behavior()
+        class Runtime(object):
+            provider = Provider()
+            def status_snapshot(self): return {"enabled": True}
+        original = self.admin.world.rooms
+        self.admin.world.rooms = {"crossroads": type("Room", (), {"knight": NPC()})()}
+        blingmud.AI_RUNTIME = Runtime()
+        COMMANDS["adminai"].execute(self.admin, "inspect knight")
+        transcript = self.transcript(self.admin_request)
+        self.assertIn("memory_entries=1", transcript)
+        self.assertNotIn("private name", transcript)
+        self.admin.world.rooms = original
+
     def test_admin_log_records_action_without_reason_text(self):
         sink = io.StringIO()
         original_sink = OPS_LOG.sink

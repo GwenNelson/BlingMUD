@@ -1147,7 +1147,7 @@ class AdminStatusCommand(Command):
 class AdminAICommand(Command):
     name = "adminai"
     aliases = ()
-    usage = "/adminai [status|refresh|clear|enable|disable|npc <knight|val> <local|advisory>]"
+    usage = "/adminai [status|refresh|clear|enable|disable|inspect <knight|val>|npc <knight|val> <local|advisory>]"
     summary = "Inspect or control bounded optional NPC advisory AI."
     admin_only = True
 
@@ -1194,6 +1194,27 @@ class AdminAICommand(Command):
             queued = AI_RUNTIME.refresh_catalogue()
             session.send("npc_ai: refresh_{0}".format("queued" if queued else "rejected"))
             log_event("admin.ai", actor=session.player.name, operation="refresh", queued=bool(queued))
+            return
+        if operation == "inspect" and len(parts) == 2 and parts[1].lower() in ("knight", "val"):
+            npc = self._npc_behavior(session, parts[1].lower())
+            snapshotter = None if npc is None else getattr(npc.behavior, "persistent_state", None)
+            if snapshotter is None:
+                session.send("npc_ai: npc_unavailable")
+                return
+            try:
+                document = snapshotter(parts[1].lower())
+                resources = document.get("resources", {})
+                memory = document.get("memory", {})
+                session.send(
+                    "npc_ai: {0} state={1} resources={2} memory_entries={3}".format(
+                        parts[1].lower(),
+                        str(document.get("state", "unknown"))[:80],
+                        len(resources) if isinstance(resources, dict) else 0,
+                        len(memory) if isinstance(memory, (dict, list, tuple)) else 0
+                    )
+                )
+            except Exception:
+                session.send("npc_ai: inspect_failed")
             return
         if (
             operation == "npc" and len(parts) == 3
