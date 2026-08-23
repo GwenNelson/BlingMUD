@@ -97,6 +97,35 @@ class CommandDispatchTests(unittest.TestCase):
             self.transcript().count("There are no obvious exits."), 2
         )
 
+    def test_bare_mapper_commands_are_additive_and_other_text_is_chat(self):
+        north = Room("north", "North", "A northern room.")
+        self.room.add_exit("north", north)
+        north.add_exit("south", self.room)
+
+        result = self.session.dispatch_authenticated_input("look")
+        self.assertEqual(result, "mapper_command")
+        self.assertIn("Global description", self.transcript())
+        self.assertNotIn("> look", self.transcript())
+
+        result = self.session.dispatch_authenticated_input("N")
+        self.assertEqual(result, "mapper_command")
+        self.assertIs(self.player.room, north)
+
+        self.session.handle_command("/south")
+        self.assertIs(self.player.room, self.room)
+
+        result = self.session.dispatch_authenticated_input("look around")
+        self.assertEqual(result, "chat")
+        self.assertIn("look around", self.transcript())
+
+    def test_say_preserves_literal_bare_mapper_words(self):
+        self.session.handle_command("/say look")
+        self.assertIn("> look", self.transcript())
+        self.assertNotIn("Room improperly claimed", self.transcript())
+
+        self.session.handle_command("/say")
+        self.assertIn("Say what?", self.transcript())
+
     def test_reserved_admin_command_bypasses_room_and_checks_privilege(self):
         self.session.handle_command("/shutdown 30 maintenance")
 

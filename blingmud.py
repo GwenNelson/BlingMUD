@@ -126,6 +126,20 @@ GMCP_DIRECTION_NAMES = {
     "southwest": "sw"
 }
 
+BARE_MAPPER_COMMANDS = frozenset((
+    "look", "l",
+    "north", "n",
+    "south", "s",
+    "east", "e",
+    "west", "w",
+    "up", "u",
+    "down", "d",
+    "northeast", "ne",
+    "northwest", "nw",
+    "southeast", "se",
+    "southwest", "sw"
+))
+
 
 class DatabaseMigrationError(RuntimeError):
     pass
@@ -2440,6 +2454,21 @@ class Session(object):
         )
         self.player.room.notify_player_said(self.player, line)
 
+    def dispatch_authenticated_input(self, line):
+        """Dispatch one line, including finite bare mapper conveniences."""
+        if line.startswith("/"):
+            self.handle_command(line)
+            return "command"
+
+        bare_command = line.casefold()
+
+        if bare_command in BARE_MAPPER_COMMANDS:
+            self.handle_command("/" + bare_command)
+            return "mapper_command"
+
+        self.handle_chat(line)
+        return "chat"
+
     def handle_command(self, line):
         command_line = line[1:].strip()
 
@@ -2554,6 +2583,10 @@ class Session(object):
         self.send("")
         self.send("Welcome, {0}.".format(self.player.name))
         self.send("Ordinary text is spoken aloud.")
+        self.send(
+            "Bare look and directions also work for mapper compatibility; "
+            "use /say to speak those words."
+        )
         self.send("Commands begin with a slash. Try /help.")
         self.send("More importantly, try /bling.")
         self.send("")
@@ -2578,10 +2611,7 @@ class Session(object):
                 continue
 
             with self.state_lock:
-                if line.startswith("/"):
-                    self.handle_command(line)
-                else:
-                    self.handle_chat(line)
+                self.dispatch_authenticated_input(line)
 
                 self.flush_gmcp()
 

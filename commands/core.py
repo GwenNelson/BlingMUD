@@ -87,6 +87,23 @@ class LookCommand(Command):
 
 
 @register_command
+class SayCommand(Command):
+    name = "say"
+    aliases = ()
+    usage = "/say <message>"
+    summary = "Speak text that would otherwise be a bare mapper command."
+
+    def execute(self, session, arguments):
+        message = arguments.strip()
+
+        if not message:
+            session.send("Say what?")
+            return
+
+        session.handle_chat(message)
+
+
+@register_command
 class GoCommand(Command):
     name = "go"
     aliases = ()

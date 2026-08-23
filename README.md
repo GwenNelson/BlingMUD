@@ -28,7 +28,9 @@ GMCP is available as Telnet option 201. After `IAC DO GMCP`, clients may identif
 
 Global and room-local commands declare validated usage, aliases and summaries through `CommandSpec`. `/help` is generated from the commands actually available to the player, and `/help <command or alias>` shows focused help. Pressing Tab while typing the slash-command token canonicalizes an exact alias, completes a unique command, extends a shared prefix, or lists the finite matching command names. Compare-and-replace prevents a delayed Tab event from overwriting newer typing; arguments are deliberately not completed yet.
 
-Ordinary room-local commands override a global command of the same name or alias, allowing a location to give a verb special meaning. Safety and administrative names always bypass rooms: `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `adminai`, `quit`, and `exit`. Global command registration rejects duplicate primary names or aliases atomically instead of silently replacing an existing command.
+Ordinary room-local commands override a global command of the same name or alias, allowing a location to give a verb special meaning. Safety and administrative names always bypass rooms: `admin`, `shutdown`, `kick`, `heal`, `save`, `adminstatus`, `adminai`, `say`, `quit`, and `exit`. Global command registration rejects duplicate primary names or aliases atomically instead of silently replacing an existing command.
+
+Slash commands remain the canonical command syntax. For compatibility with Mudlet's generic mapper and conventional speedwalks, bare `look`/`l` and the finite cardinal, diagonal, up, and down direction names/aliases also dispatch their existing slash commands. Every other bare line remains speech; `/say <message>` explicitly speaks a reserved mapper word such as `look` or `north`.
 
 Equipment can be removed with `/unequip <item or slot>` or `/remove <item or slot>`. The item stays in inventory, its `on_unequip()` effect runs once, and room occupants see the removal.
 

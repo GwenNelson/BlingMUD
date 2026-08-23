@@ -27,6 +27,7 @@ RESERVED_GLOBAL_COMMANDS = frozenset((
     "save",
     "adminstatus",
     "adminai",
+    "say",
     "quit",
     "exit"
 ))
