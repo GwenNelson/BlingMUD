@@ -13,7 +13,13 @@ class OvergrownHerbGarden(Room):
     def on_command(self, session, command, arguments):
         target = arguments.strip().lower()
         if command in ("examine", "inspect"):
-            session.send("The garden is disorienting and slightly toxic. A rare weed glows beyond the thorn wall.")
+            if self.rare_weed_available:
+                session.send("The garden is disorienting and slightly toxic. A rare weed glows beyond the thorn wall.")
+            else:
+                session.send(
+                    "The garden is disorienting and slightly toxic. The "
+                    "harvested patch beyond the thorn wall is now bare."
+                )
             return True
         if command == "harvest":
             if target not in ("weed", "rare weed"):

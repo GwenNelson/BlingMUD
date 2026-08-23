@@ -144,6 +144,7 @@ Village content
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects. (Rare Weed harvesting and bounded runtime-local give-to-Ceridwen experimental stock are implemented; durable unlock and confusion mechanics remain.)
 ☒ Make Ceridwen's advertised `/give weed` command return bounded syntax feedback for missing or invalid targets instead of falling through as unknown.
 ☒ Make Ceridwen's post-unlock salve, antitoxin, and repeated-weed feedback reflect the actual runtime shelf state.
+☒ Make the herb garden's examination text stop advertising its finite rare weed after the patch has been harvested.
 ☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec. (Initial safe room, reflection, recovery, and Tome interactions are implemented; respec remains gated.)
 ☒ Add the non-verbal Wisp Mother with examine, one-hit protection, removal, prolonged darkness, recovery, and shared harm state.
 ☒ Make Val react to Wisp Mother harm through shared runtime state when the next player enters the tavern.
