@@ -1060,11 +1060,13 @@ class AdminStatusCommand(Command):
                 state = npc.actor_status_snapshot()
                 room_id = None if npc.room is None else npc.room.room_id
                 session.send(
-                    "npc {0}: room={1} mode={2} fallback={3} queued={4} errors={5}".format(
+                    "npc {0}: room={1} mode={2} fallback={3} "
+                    "actor_fallback={4} queued={5} errors={6}".format(
                         npc.name,
                         room_id,
                         npc.behavior_mode,
-                        state["fallback_mode"],
+                        npc.local_fallback_mode,
+                        state["fallback_mode"] or "none",
                         state["mailbox_depth"],
                         state["errors"]
                     )

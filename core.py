@@ -1804,6 +1804,16 @@ class NPC(Entity):
     def behavior_mode(self):
         return self.behavior.mode
 
+    @property
+    def local_fallback_mode(self):
+        """Return the local behavior that remains when a wrapper is unavailable."""
+        fallback = getattr(self.behavior, "fallback", None)
+
+        if isinstance(fallback, NPCBehavior):
+            return fallback.mode
+
+        return self.behavior.mode
+
     def set_behavior(self, behavior):
         if not isinstance(behavior, NPCBehavior):
             raise TypeError("behavior must be an NPCBehavior")

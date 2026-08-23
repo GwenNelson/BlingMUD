@@ -100,7 +100,7 @@ OpenRouter implementation is explicitly authorized. Live paid completion and fre
 Admin / ops
 
 ☒ Add admin-only `/shutdown now`, `/kick`, `/heal`, `/save`, and `/adminstatus`, with confirmation/bounds, graceful output draining, shared health/save paths, and non-admin help/completion filtering.
-☒ Add bounded `/adminstatus rooms` and `/adminstatus npcs` views for activity, behavior mode, actor fallback, queues, and errors.
+☒ Add bounded `/adminstatus rooms` and `/adminstatus npcs` views for activity, behavior mode, local behavioral fallback, actor fallback, queues, and errors; never label a healthy actor's empty watchdog state as the NPC fallback.
 ☒ Add bounded admin-only `/adminai` status, refresh, circuit-clear, enable/disable, and per-NPC local/advisory controls, including `/adminai enable knight advisory` syntax.
 ☒ Make global advisory disable and per-NPC local mode reject queued or in-flight remote speech and release the exact FSM fallback.
 ☒ Reject contradictory `/adminai disable <npc> advisory` syntax instead of interpreting a disable operation as advisory mode.

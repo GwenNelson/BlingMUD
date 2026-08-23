@@ -4,7 +4,7 @@ import unittest
 
 import blingmud
 from llm_fsm import AdvisoryFSMBehavior
-from core import COMMANDS, Player, Room
+from core import COMMANDS, FSMBehavior, NPC, Player, Room
 from operational_log import OPS_LOG
 
 
@@ -184,6 +184,45 @@ class AdminCommandTests(unittest.TestCase):
 
         COMMANDS["adminstatus"].execute(self.admin, "rooms")
         self.assertIn("room start", self.transcript(self.admin_request))
+
+    def test_adminstatus_distinguishes_local_and_actor_fallbacks(self):
+        class ReadyAdvisor(object):
+            enabled = True
+
+            @staticmethod
+            def is_ready(npc_name):
+                return True
+
+        fallback = FSMBehavior(
+            {"idle": {"events": {}}},
+            "idle"
+        )
+        npc = NPC(
+            "Status Oracle",
+            behavior=AdvisoryFSMBehavior(fallback, ReadyAdvisor())
+        )
+        self.world.starting_room.add_npc(npc)
+
+        try:
+            COMMANDS["adminstatus"].execute(self.admin, "npcs")
+            transcript = self.transcript(self.admin_request)
+            self.assertIn(
+                "npc Status Oracle: room=start mode=llm_fsm "
+                "fallback=fsm actor_fallback=none",
+                transcript
+            )
+
+            with npc.actor.condition:
+                npc.actor.unresponsive = True
+
+            self.admin_request.sent = []
+            COMMANDS["adminstatus"].execute(self.admin, "npcs")
+            self.assertIn(
+                "fallback=fsm actor_fallback=inert",
+                self.transcript(self.admin_request)
+            )
+        finally:
+            self.world.starting_room.remove_npc(npc)
 
     def test_adminstatus_ai_reports_only_bounded_runtime_metadata(self):
         class Provider(object):
