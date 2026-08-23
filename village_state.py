@@ -52,13 +52,16 @@ class VillageState(object):
             if self.acorn_supply <= 0:
                 return None
 
+            previous_danger = self.acorn_danger
             self.acorn_supply -= 1
             self.acorns_harvested += 1
             self.acorn_danger = max(0, self.acorn_danger - 1)
             return {
                 "danger": self.acorn_danger,
                 "supply": self.acorn_supply,
-                "harvested": self.acorns_harvested
+                "harvested": self.acorns_harvested,
+                "became_safe": previous_danger > 0
+                and self.acorn_danger == 0
             }
 
     def refresh_wisp(self, now):

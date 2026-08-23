@@ -198,6 +198,22 @@ class VillageGreenContentTests(unittest.TestCase):
             }
         )
 
+    def test_only_the_harvest_that_clears_danger_claims_to_make_green_safe(self):
+        self.canopy.enter(self.player, announce=False)
+        harvest_messages = []
+
+        for unused in range(4):
+            self.player.inventory = []
+            self.session.messages = []
+            self.canopy.on_command(self.session, "harvest", "acorn")
+            harvest_messages.append("\n".join(self.session.messages))
+
+        self.assertNotIn("final burden", harvest_messages[0])
+        self.assertNotIn("final burden", harvest_messages[1])
+        self.assertIn("final burden", harvest_messages[2])
+        self.assertNotIn("final burden", harvest_messages[3])
+        self.assertIn("already safe", harvest_messages[3])
+
     def test_low_harvest_hazard_bonks_only_until_green_is_safe(self):
         starting_health = self.player.health
         self.clock.now = 105.0

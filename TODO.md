@@ -133,6 +133,7 @@ Village content
 ☒ Persist recent-collapse state and a bounded wall-clock status timestamp in character schema version 2; decay intoxication safely across offline time without allowing backwards-clock increases.
 ☒ Add the initial Village Green and Hanging Tree canopy with `/up`/`/down`, day/night Wisp descriptions, both acorn harvest verbs, bounded giant-acorn supply, and a room-aware low-harvest bonking hazard.
 ☒ Persist bounded acorn supply/danger/harvest totals and Wisp ward/absence/harm state across restarts using strict version-1 world JSON and a one-key asynchronous writer.
+☒ Announce the Green becoming safe only on the harvest that actually clears acorn danger; give later finite harvests accurate Corbel-oriented feedback.
 ☐ Make canopy supply renewable across time without enabling unbounded item creation.
 ☒ Add Master Corbel's local-FSM turnery, fixed-price giant-acorn trade/crafting, persistent Acorn Goblets that Val can fill, bounded Acorn Mash food, persistent bounded coins, and the Green-to-Holler loop.
 ☒ Preserve and display the contained Val drink's real effect message when drinking from a reusable Acorn Goblet.

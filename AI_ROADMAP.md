@@ -223,7 +223,7 @@ Village Green, per-location checklist
 - Failure / consequence:
   - if the acorn economy is neglected, idle players in the Green get lightly punished by the environment
   - the hazard should be funny, not oppressive
-- [done: initial slice] The Green is connected west of the existing Town Square and up to a separate canopy room. It has injected/testable day/night descriptions, visible night Wisps, a hidden room-aware falling-acorn heartbeat, and a shared danger counter reduced by canopy harvests.
+- [done: initial slice] The Green is connected west of the existing Town Square and up to a separate canopy room. It has injected/testable day/night descriptions, visible night Wisps, a hidden room-aware falling-acorn heartbeat, and a shared danger counter reduced by canopy harvests. The safety announcement occurs only on the exact harvest that clears the danger; later finite acorns remain available for Corbel without replaying the transition.
 - [current bound] The initial canopy has twelve runtime acorns and allows one giant acorn to be carried at a time, preventing unbounded item creation. The first Corbel economy turns those acorns into fixed-price coins or reusable Goblets; renewable supply remains planned.
 
 Master Corbel / Turner shop, per-location checklist

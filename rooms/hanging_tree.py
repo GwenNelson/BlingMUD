@@ -99,10 +99,15 @@ class HangingTreeCanopy(Room):
             exclude=session
         )
 
-        if snapshot["danger"] == 0:
+        if snapshot["became_safe"]:
             session.send(
                 "A final burden lifts from the branches. The Green below "
                 "should be safe from surprise bonkings for now."
+            )
+        elif snapshot["danger"] == 0:
+            session.send(
+                "The Green below is already safe from surprise bonkings, "
+                "but Corbel can still put this acorn to use."
             )
         else:
             session.send(
