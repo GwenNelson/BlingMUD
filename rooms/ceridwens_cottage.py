@@ -37,7 +37,10 @@ class CeridwensCottage(Room):
             else:
                 session.send("Ceridwen taps the pot. Bring a rare weed before she sells that remedy.")
             return True
-        if command == "give" and target in ("weed", "rare weed"):
+        if command == "give":
+            if target not in ("weed", "rare weed"):
+                session.send("Give what? Ceridwen is looking for a rare weed.")
+                return True
             weed = next((item for item in session.player.inventory if isinstance(item, RareWeed)), None)
             if weed is None:
                 session.send("Ceridwen needs a rare weed before she can unlock experimental stock.")

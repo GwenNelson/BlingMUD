@@ -138,6 +138,7 @@ Village content
 ☒ Guarantee bare `/look` and `/l` show the full room and all exits in every room, while preserving targeted room-local look behavior such as the Temple mirror.
 ☐ Add the Smithereens, Eisele, and Tackdriver. (Initial bounded smithy room, Eisele FSM, scrap browse, and Tackdriver examine/listen/talk interactions are implemented; buying and commissions remain.)
 ☐ Add Ceridwen's cottage, the herb garden, the rare weed unlock, and disorientation effects. (Rare Weed harvesting and bounded runtime-local give-to-Ceridwen experimental stock are implemented; durable unlock and confusion mechanics remain.)
+☒ Make Ceridwen's advertised `/give weed` command return bounded syntax feedback for missing or invalid targets instead of falling through as unknown.
 ☐ Add the Temple of the Self, mirror reflection, Self-Actualized, and stat respec. (Initial safe room, reflection, recovery, and Tome interactions are implemented; respec remains gated.)
 ☒ Add the non-verbal Wisp Mother with examine, one-hit protection, removal, prolonged darkness, recovery, and shared harm state.
 ☒ Make Val react to Wisp Mother harm through shared runtime state when the next player enters the tavern.

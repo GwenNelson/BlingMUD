@@ -18,6 +18,22 @@ class Session(object):
 
 
 class CeridwenGardenTests(unittest.TestCase):
+    def test_advertised_give_command_always_returns_useful_feedback(self):
+        player = Player("Herbalist")
+        session = Session(player)
+        cottage = CeridwensCottage()
+        cottage.enter(player, announce=False)
+        try:
+            self.assertTrue(cottage.on_command(session, "give", ""))
+            self.assertEqual(
+                session.messages[-1],
+                "Give what? Ceridwen is looking for a rare weed."
+            )
+            self.assertTrue(cottage.on_command(session, "give", "mushroom"))
+            self.assertIn("rare weed", session.messages[-1])
+        finally:
+            cottage.leave(player, announce=False)
+
     def test_cottage_and_garden_are_bounded_gated_slices(self):
         player = Player("Herbalist")
         session = Session(player)
@@ -37,7 +53,7 @@ class CeridwenGardenTests(unittest.TestCase):
         cottage.on_command(session, "give", "weed")
         cottage.on_command(session, "buy", "experimental")
         self.assertIn("experimental potion", session.messages[-1])
-        garden.leave(player, announce=False)
+        cottage.leave(player, announce=False)
 
     def test_rare_weed_round_trips_through_explicit_player_template(self):
         player = Player("SavedHerbalist")
