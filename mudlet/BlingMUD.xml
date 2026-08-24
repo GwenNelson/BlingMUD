@@ -1,0 +1,505 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE MudletPackage>
+<MudletPackage version="1.001">
+  <ScriptPackage>
+    <ScriptGroup isActive="yes" isFolder="yes">
+      <name>BlingMUD</name>
+      <packageName>BlingMUD</packageName>
+      <script></script>
+      <eventHandlerList />
+      <Script isActive="yes" isFolder="no">
+        <name>BlingMUD GMCP Mapper</name>
+        <packageName>BlingMUD</packageName>
+        <script><![CDATA[
+BlingMUD = BlingMUD or {}
+BlingMUD.mapper = BlingMUD.mapper or {}
+
+local mapper = BlingMUD.mapper
+
+mapper.version = "1.0.0"
+mapper.maximumRoomID = 1000000
+mapper.maximumAreaLength = 128
+mapper.maximumNameLength = 256
+mapper.maximumExits = 12
+mapper.walkTimeoutSeconds = 3
+
+mudlet = mudlet or {}
+mudlet.mapper_script = true
+
+local directions = {
+  n = {0, 1, 0},
+  ne = {1, 1, 0},
+  e = {1, 0, 0},
+  se = {1, -1, 0},
+  s = {0, -1, 0},
+  sw = {-1, -1, 0},
+  w = {-1, 0, 0},
+  nw = {-1, 1, 0},
+  u = {0, 0, 1},
+  d = {0, 0, -1},
+  ["in"] = {0, 0, 0},
+  out = {0, 0, 0},
+}
+
+local directionAliases = {
+  north = "n",
+  northeast = "ne",
+  east = "e",
+  southeast = "se",
+  south = "s",
+  southwest = "sw",
+  west = "w",
+  northwest = "nw",
+  up = "u",
+  down = "d",
+  ["in"] = "in",
+  out = "out",
+}
+
+for direction in pairs(directions) do
+  directionAliases[direction] = direction
+end
+
+local function positiveInteger(value)
+  return type(value) == "number"
+    and value >= 1
+    and value <= mapper.maximumRoomID
+    and value == math.floor(value)
+end
+
+local function boundedText(value, maximum)
+  return type(value) == "string"
+    and value ~= ""
+    and #value <= maximum
+end
+
+local function normalizeDirection(value)
+  if type(value) ~= "string" then
+    return nil
+  end
+
+  return directionAliases[string.lower(value)]
+end
+
+local function roomHash(serverRoomID)
+  return "BlingMUD:" .. tostring(serverRoomID)
+end
+
+local function areaID(areaName)
+  local areas = getAreaTable() or {}
+  local existing = areas[areaName]
+
+  if type(existing) == "number" and existing >= 1 then
+    return existing
+  end
+
+  local created, message = addAreaName(areaName)
+
+  if type(created) ~= "number" or created < 1 then
+    return nil, message or "could not create the map area"
+  end
+
+  return created
+end
+
+local function ensureRoom(serverRoomID, targetAreaID, x, y, z)
+  local hash = roomHash(serverRoomID)
+  local mudletRoomID = getRoomIDbyHash(hash)
+  local created = false
+
+  if type(mudletRoomID) ~= "number" or mudletRoomID < 1 then
+    mudletRoomID = createRoomID()
+
+    if type(mudletRoomID) ~= "number" or mudletRoomID < 1 then
+      return nil, false, "could not allocate a Mudlet room ID"
+    end
+
+    local added, message = addRoom(mudletRoomID, targetAreaID)
+
+    if not added then
+      return nil, false, message or "could not add a Mudlet room"
+    end
+
+    setRoomIDbyHash(mudletRoomID, hash)
+    setRoomCoordinates(mudletRoomID, x or 0, y or 0, z or 0)
+    setRoomName(mudletRoomID, "Unvisited BlingMUD room " .. tostring(serverRoomID))
+    created = true
+  else
+    setRoomArea(mudletRoomID, targetAreaID)
+  end
+
+  setRoomUserData(mudletRoomID, "blingmud.room_id", tostring(serverRoomID))
+  return mudletRoomID, created
+end
+
+local function validateRoomInfo(info)
+  if type(info) ~= "table"
+      or not positiveInteger(info.num)
+      or not boundedText(info.name, mapper.maximumNameLength)
+      or not boundedText(info.area, mapper.maximumAreaLength)
+      or type(info.exits) ~= "table" then
+    return nil, "invalid Room.Info header"
+  end
+
+  local exits = {}
+  local count = 0
+
+  for rawDirection, destination in pairs(info.exits) do
+    local direction = normalizeDirection(rawDirection)
+
+    if direction == nil or not positiveInteger(destination) then
+      return nil, "invalid Room.Info exit"
+    end
+
+    if exits[direction] == nil then
+      count = count + 1
+    end
+
+    if count > mapper.maximumExits then
+      return nil, "too many Room.Info exits"
+    end
+
+    exits[direction] = destination
+  end
+
+  return {
+    num = info.num,
+    name = info.name,
+    area = info.area,
+    exits = exits,
+  }
+end
+
+local function stopWalk(message, finished)
+  local walk = mapper.walk
+
+  if not walk or not walk.active then
+    return
+  end
+
+  walk.active = false
+  walk.generation = walk.generation + 1
+
+  if walk.timer then
+    pcall(killTimer, walk.timer)
+    walk.timer = nil
+  end
+
+  if finished then
+    raiseEvent("sysSpeedwalkFinished")
+  else
+    raiseEvent("sysSpeedwalkStopped")
+
+    if message and cecho then
+      cecho("\n<orange>BlingMUD mapper:<reset> " .. message .. "\n")
+    end
+  end
+end
+
+local function sendWalkStep()
+  local walk = mapper.walk
+
+  if not walk or not walk.active then
+    return
+  end
+
+  if walk.index > #walk.directions then
+    stopWalk(nil, true)
+    return
+  end
+
+  local direction = walk.directions[walk.index]
+  local generation = walk.generation
+  send("/" .. direction, true)
+  walk.timer = tempTimer(mapper.walkTimeoutSeconds, function()
+    local current = mapper.walk
+
+    if current and current.active and current.generation == generation then
+      stopWalk("speedwalk stopped because the room change was not confirmed", false)
+    end
+  end)
+end
+
+local function confirmWalkStep(mudletRoomID)
+  local walk = mapper.walk
+
+  if not walk or not walk.active then
+    return
+  end
+
+  local expected = walk.path[walk.index]
+
+  if mudletRoomID ~= expected then
+    stopWalk("speedwalk stopped after an unexpected room change", false)
+    return
+  end
+
+  if walk.timer then
+    pcall(killTimer, walk.timer)
+    walk.timer = nil
+  end
+
+  walk.index = walk.index + 1
+
+  if walk.index > #walk.directions then
+    stopWalk(nil, true)
+  else
+    tempTimer(0, sendWalkStep)
+  end
+end
+
+function mapper.updateRoom(rawInfo)
+  local info, validationError = validateRoomInfo(rawInfo)
+
+  if not info then
+    return false, validationError
+  end
+
+  local targetAreaID, areaError = areaID(info.area)
+
+  if not targetAreaID then
+    return false, areaError
+  end
+
+  local mudletRoomID, _, roomError = ensureRoom(
+    info.num,
+    targetAreaID,
+    0,
+    0,
+    0
+  )
+
+  if not mudletRoomID then
+    return false, roomError
+  end
+
+  setRoomName(mudletRoomID, info.name)
+  setRoomArea(mudletRoomID, targetAreaID)
+
+  local currentX, currentY, currentZ = getRoomCoordinates(mudletRoomID)
+  currentX = currentX or 0
+  currentY = currentY or 0
+  currentZ = currentZ or 0
+
+  local desired = {}
+
+  for direction, destination in pairs(info.exits) do
+    local offset = directions[direction]
+    local destinationID, _, destinationError = ensureRoom(
+      destination,
+      targetAreaID,
+      currentX + offset[1],
+      currentY + offset[2],
+      currentZ + offset[3]
+    )
+
+    if not destinationID then
+      return false, destinationError
+    end
+
+    desired[direction] = destinationID
+
+    if not setExit(mudletRoomID, destinationID, direction) then
+      return false, "could not set a Mudlet room exit"
+    end
+  end
+
+  for direction in pairs(getRoomExits(mudletRoomID) or {}) do
+    local normalized = normalizeDirection(direction)
+
+    if normalized and desired[normalized] == nil then
+      setExit(mudletRoomID, -1, normalized)
+    end
+  end
+
+  mapper.currentRoom = mudletRoomID
+  mapper.currentServerRoom = info.num
+  centerview(mudletRoomID)
+
+  if type(updateMap) == "function" then
+    updateMap()
+  end
+
+  confirmWalkStep(mudletRoomID)
+  return true
+end
+
+function mapper.onRoomInfo()
+  local info = gmcp and gmcp.Room and gmcp.Room.Info
+  local ok, result, message = pcall(mapper.updateRoom, info)
+
+  if not ok then
+    message = result
+    result = false
+  end
+
+  if not result and cecho then
+    cecho("\n<orange>BlingMUD mapper ignored Room.Info:<reset> "
+      .. tostring(message or "unknown error") .. "\n")
+  end
+end
+
+function mapper.requestRoomInfo()
+  if type(gmod) == "table" and type(gmod.enableModule) == "function" then
+    gmod.enableModule("BlingMUD", "Room")
+  elseif type(sendGMCP) == "function" then
+    sendGMCP('Core.Supports.Add ["Room 1"]')
+  end
+end
+
+function mapper.onProtocolEnabled(_, protocol)
+  if protocol == "GMCP" then
+    mapper.requestRoomInfo()
+  end
+end
+
+function mapper.startSpeedwalk(rawDirections, rawPath)
+  if type(rawDirections) ~= "table"
+      or type(rawPath) ~= "table"
+      or #rawDirections == 0
+      or #rawDirections ~= #rawPath
+      or #rawDirections > 128 then
+    return false
+  end
+
+  local walkDirections = {}
+  local walkPath = {}
+
+  for index = 1, #rawDirections do
+    local direction = normalizeDirection(rawDirections[index])
+
+    if direction == nil
+        or type(rawPath[index]) ~= "number"
+        or rawPath[index] < 1 then
+      return false
+    end
+
+    walkDirections[index] = direction
+    walkPath[index] = rawPath[index]
+  end
+
+  if mapper.walk and mapper.walk.active then
+    stopWalk("replaced by a new speedwalk", false)
+  end
+
+  mapper.walkGeneration = (mapper.walkGeneration or 0) + 1
+  mapper.walk = {
+    active = true,
+    directions = walkDirections,
+    generation = mapper.walkGeneration,
+    index = 1,
+    path = walkPath,
+  }
+
+  raiseEvent("sysSpeedwalkStarted")
+  sendWalkStep()
+  return true
+end
+
+if not mapper.speedwalkHookCaptured then
+  mapper.hadPreviousDoSpeedWalk = type(doSpeedWalk) == "function"
+  mapper.previousDoSpeedWalk = doSpeedWalk
+  mapper.speedwalkHookCaptured = true
+end
+
+function mapper.doSpeedWalk()
+  if not mapper.startSpeedwalk(speedWalkDir, speedWalkPath) and cecho then
+    cecho("\n<orange>BlingMUD mapper:<reset> no usable path to that room\n")
+  end
+end
+
+function mapper.installSpeedwalk()
+  doSpeedWalk = mapper.doSpeedWalk
+end
+
+mapper.installSpeedwalk()
+
+function mapper.onConnection()
+  if mapper.walk and mapper.walk.active then
+    stopWalk("connection changed", false)
+  end
+
+  -- Reapply this after all profile packages have loaded. The bundled generic
+  -- mapper otherwise installs a bare-command speedwalk function of its own.
+  mapper.installSpeedwalk()
+end
+
+function mapper.onUninstall(_, packageName)
+  if packageName ~= "BlingMUD" then
+    return
+  end
+
+  if mapper.walk and mapper.walk.active then
+    stopWalk("package uninstalled", false)
+  end
+
+  if mapper.handlers then
+    for _, handlerID in ipairs(mapper.handlers) do
+      pcall(killAnonymousEventHandler, handlerID)
+    end
+
+    mapper.handlers = {}
+  end
+
+  if doSpeedWalk == mapper.doSpeedWalk then
+    if mapper.hadPreviousDoSpeedWalk then
+      doSpeedWalk = mapper.previousDoSpeedWalk
+    else
+      doSpeedWalk = nil
+    end
+  end
+
+  mapper.previousDoSpeedWalk = nil
+  mapper.hadPreviousDoSpeedWalk = nil
+  mapper.speedwalkHookCaptured = nil
+
+  if type(gmod) == "table" and type(gmod.disableModule) == "function" then
+    gmod.disableModule("BlingMUD", "Room")
+  end
+end
+
+if mapper.handlers then
+  for _, handlerID in ipairs(mapper.handlers) do
+    pcall(killAnonymousEventHandler, handlerID)
+  end
+end
+
+mapper.handlers = {
+  registerAnonymousEventHandler("gmcp.Room.Info", mapper.onRoomInfo),
+  registerAnonymousEventHandler("sysProtocolEnabled", mapper.onProtocolEnabled),
+  registerAnonymousEventHandler("sysConnectionEvent", mapper.onConnection),
+  registerAnonymousEventHandler("sysUninstallPackage", mapper.onUninstall),
+}
+
+if type(map) == "table" and map.mapping then
+  if type(map.set) == "function" then
+    pcall(map.set, "mapping", false)
+  else
+    map.mapping = false
+  end
+end
+
+mapper.requestRoomInfo()
+
+if gmcp and gmcp.Room and gmcp.Room.Info then
+  tempTimer(0, mapper.onRoomInfo)
+end
+
+if not mapper.loadedMessageShown and cecho then
+  mapper.loadedMessageShown = true
+  cecho("\n<green>BlingMUD GMCP mapper active.<reset> Mapping starts automatically.\n")
+end
+]]></script>
+        <eventHandlerList />
+      </Script>
+    </ScriptGroup>
+  </ScriptPackage>
+  <TriggerPackage />
+  <AliasPackage />
+  <ActionPackage />
+  <KeyPackage />
+  <TimerPackage />
+  <HelpPackage>
+    <helpURL>https://github.com/GwenNelson/BlingMUD</helpURL>
+  </HelpPackage>
+</MudletPackage>
